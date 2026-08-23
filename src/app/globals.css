@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Cartographic palette — warm paper, ink, a confident route accent.
+     Deliberately NOT the generic purple-SaaS look. */
+  --paper: #f3f0e8;
+  --surface: #fbfaf6;
+  --raised: #ffffff;
+  --ink: #201d19;
+  --muted: #6c665c;
+  --faint: #9c968a;
+  --line: #e3ddd0;
+  --route: #0e7c66; /* the path line — deep teal-green */
+  --route-soft: #d3e7e0;
+  --marker: #c2703d; /* "you are here" — terracotta */
+  --marker-soft: #f0dccb;
+  --good: #2f8f5b;
+  --warn: #b8801c;
+  --bad: #bf4630;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+}
+
+* {
+  border-color: var(--line);
+}
+
+html,
+body {
+  background-color: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+/* subtle paper grain via layered radial dots — keeps the map feel calm */
+.bg-topo {
+  background-image: radial-gradient(var(--line) 0.5px, transparent 0.5px);
+  background-size: 22px 22px;
+}
+
+::selection {
+  background: var(--route-soft);
+}
+
+/* thin, unobtrusive scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 8px;
+}

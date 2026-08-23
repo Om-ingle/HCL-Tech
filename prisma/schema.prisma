@@ -1,0 +1,84 @@
+// Learning Navigator — persistence layer (SQLite via Prisma).
+// Deliberately minimal: 4 dynamic tables + 1 singleton AI config row.
+// Static catalog (skills / roles / resources / quizzes) lives in code, not the DB.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model LearnerProfile {
+  id              String   @id @default(cuid())
+  name            String
+  targetRole      String
+  goalText        String   @default("")
+  experienceLevel String   @default("beginner") // beginner | intermediate | advanced
+  learningStyle   String   @default("mixed")     // video | reading | project | mixed
+  weeklyHours     Int      @default(8)
+  timelineWeeks   Int      @default(24)
+  careerOutcome   String   @default("")
+  interests       String   @default("[]") // JSON string[]
+  knownSkills     String   @default("[]") // JSON {skillId, proficiency}[]
+  preferences     String   @default("{}") // JSON object (weights, biases)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  paths  LearningPath[]
+  steps  StepState[]
+  events Event[]
+}
+
+model LearningPath {
+  id        String   @id @default(cuid())
+  profileId String
+  version   Int
+  phases    String   @default("[]") // JSON Phase[]
+  rationale String   @default("{}") // JSON generation rationale
+  createdAt DateTime @default(now())
+
+  profile LearnerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+model StepState {
+  id        String   @id @default(cuid())
+  profileId String
+  stepId    String
+  status    String   @default("locked") // locked | available | in_progress | completed | skipped
+  score     Int?
+  updatedAt DateTime @updatedAt
+
+  profile LearnerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, stepId])
+  @@index([profileId])
+}
+
+model Event {
+  id        String   @id @default(cuid())
+  profileId String
+  type      String // completion | assessment | feedback | adaptation | time_change | goal_change | profile_created
+  payload   String   @default("{}") // JSON
+  createdAt DateTime @default(now())
+
+  profile LearnerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId])
+}
+
+// Single-row runtime AI configuration. API key is stored server-side ONLY and
+// never returned to the browser un-masked.
+model AiConfig {
+  id        String   @id @default("singleton")
+  provider  String   @default("")
+  model     String   @default("")
+  apiKey    String   @default("")
+  mode      String   @default("hybrid")
+  enabled   Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+}
