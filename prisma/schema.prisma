@@ -1,4 +1,4 @@
-// Learning Navigator — persistence layer (SQLite via Prisma).
+// Learning Navigator — persistence layer (PostgreSQL / Supabase via Prisma).
 // Deliberately minimal: 4 dynamic tables + 1 singleton AI config row.
 // Static catalog (skills / roles / resources / quizzes) lives in code, not the DB.
 
@@ -7,8 +7,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // pooled (pgbouncer) — used at runtime
+  directUrl = env("DIRECT_URL")   // direct/session — used for migrations
 }
 
 model LearnerProfile {

@@ -23,8 +23,8 @@ Built to feel like a navigator, not another purple-glass AI dashboard. It runs *
 
 ```bash
 npm install                 # also runs `prisma generate`
-cp .env.example .env        # DATABASE_URL is preset to a local SQLite file
-npm run db:push             # create the SQLite schema
+cp .env.example .env        # fill in DATABASE_URL + DIRECT_URL from Supabase
+npm run db:migrate          # create the Postgres schema
 npm run dev                 # http://localhost:3000
 ```
 
@@ -84,14 +84,14 @@ src/
     catalog/      Static skills / roles / resources / quizzes (in code, not the DB)
     server/       Service layer (domain + Prisma), HTTP helpers, assessment grading
   store/          Zustand client store
-prisma/           SQLite schema + dev.db
+prisma/           Postgres schema + migrations
 ```
 
 ---
 
 ## Tech stack
 
-Next.js 14 (App Router) · TypeScript · React 18 · Prisma + SQLite · Zod · Zustand · Tailwind CSS · Framer Motion · lucide-react. All AI calls are plain `fetch` — no vendor SDKs.
+Next.js 14 (App Router) · TypeScript · React 18 · Prisma + PostgreSQL (Supabase) · Zod · Zustand · Tailwind CSS · Framer Motion · lucide-react. All AI calls are plain `fetch` — no vendor SDKs.
 
 ## Scripts
 
@@ -99,7 +99,8 @@ Next.js 14 (App Router) · TypeScript · React 18 · Prisma + SQLite · Zod · Z
 |---|---|
 | `npm run dev` | Start the dev server |
 | `npm run build` / `npm start` | Production build / serve |
-| `npm run db:push` | Sync the Prisma schema to SQLite |
+| `npm run db:migrate` | Create/apply a migration (local dev) |
+| `npm run db:deploy` | Apply pending migrations (CI / prod) |
 | `npm run db:studio` | Browse the database |
 | `npm run lint` | Lint |
 
