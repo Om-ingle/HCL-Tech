@@ -12,6 +12,10 @@
  *    the settings UI saves it — must produce a real call attempt and a
  *    deterministic fallback + a visible reason when the vendor rejects the key.
  * 3. No session / no key: pure deterministic fallback, no note, no network.
+ * 4. Gemini adapter: empty candidates / thought parts / safety blocks are
+ *    diagnosed with a reason (mocked vendor responses).
+ * 5. A retired saved model (vendor 404) is retried once with the provider's
+ *    current default, and the message says so (mocked vendor responses).
  *
  * Provider-layer tests run with the DB pointed at an unreachable local port so
  * no real config row can influence them. Section 2 reconnects to the real DB
@@ -31,10 +35,11 @@ const { PROVIDER_META } = jiti("../src/lib/ai/types.ts");
 // Record every outgoing request (URL + body) while still performing it for real.
 const realFetch = global.fetch;
 let lastRequest = null;
-global.fetch = (url, opts) => {
+const recordingFetch = (url, opts) => {
   lastRequest = { url: String(url), body: opts?.body ? String(opts.body) : "" };
   return realFetch(url, opts);
 };
+global.fetch = recordingFetch;
 
 const cfg = (provider, model) => ({
   provider,
@@ -140,6 +145,62 @@ check("unknown session id: unavailable, nothing inherited", noRow.available === 
 // Cleanup: only this suite's throwaway row goes away; learner data untouched.
 await realDb.aiConfig.deleteMany({ where: { id: SID } });
 await realDb.$disconnect();
+
+// ── 4. Gemini adapter — empty/malformed responses are diagnosed, not swallowed ─
+console.log("\n4. Gemini adapter — empty candidates, thought parts, multi-part text");
+const { geminiProvider } = jiti("../src/lib/ai/providers/gemini.ts");
+const fakeCfg = { provider: "gemini", model: "gemini-3.7-flash", apiKey: "fake", mode: "hybrid", enabled: true, available: true, source: "runtime" };
+const mockJson = (body, status = 200) => {
+  global.fetch = async () => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+};
+
+try {
+  // (a) thinking burned the whole token budget: no text, finishReason MAX_TOKENS
+  mockJson({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [] } }] });
+  let err = null;
+  try { await geminiProvider.generate({ messages: [{ role: "user", content: "hi" }], maxTokens: 8 }, fakeCfg); } catch (e) { err = e; }
+  check("empty text throws with the real reason", !!err && /MAX_TOKENS/.test(err.message), String(err?.message).slice(0, 90));
+
+  // (b) thought-summary parts are filtered out, answer text extracted
+  mockJson({ candidates: [{ content: { parts: [{ text: "(internal reasoning)", thought: true }, { text: "ok" }] } }] });
+  const r = await geminiProvider.generate({ messages: [{ role: "user", content: "hi" }] }, fakeCfg);
+  check("thought parts skipped, text extracted", r.text === "ok", JSON.stringify(r.text));
+
+  // (c) standard multi-part text is joined
+  mockJson({ candidates: [{ content: { parts: [{ text: "hello " }, { text: "world" }] } }] });
+  const r2 = await geminiProvider.generate({ messages: [{ role: "user", content: "hi" }] }, fakeCfg);
+  check("multi-part text joined", r2.text === "hello world", r2.text);
+
+  // (d) safety block is reported as a block, not "no text"
+  mockJson({ candidates: [], promptFeedback: { blockReason: "SAFETY" } });
+  let err2 = null;
+  try { await geminiProvider.generate({ messages: [{ role: "user", content: "hi" }] }, fakeCfg); } catch (e) { err2 = e; }
+  check("safety block reported with blockReason", !!err2 && /blocked: SAFETY/.test(err2.message), String(err2?.message).slice(0, 90));
+} finally {
+  global.fetch = recordingFetch;
+}
+
+// ── 5. Retired saved model → automatic default retry with a clear message ─────
+console.log("\n5. Retired model — vendor 404 'not found' retried once with the current default");
+{
+  const urls = [];
+  global.fetch = async (url) => {
+    urls.push(String(url));
+    if (urls.length === 1)
+      return new Response(
+        JSON.stringify({ error: { code: 404, message: "models/gemini-2.0-flash is not found for API version v1beta", status: "NOT_FOUND" } }),
+        { status: 404, headers: { "Content-Type": "application/json" } },
+      );
+    return new Response(
+      JSON.stringify({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+  const t = await testConnection({ provider: "gemini", model: "gemini-2.0-flash", apiKey: "fake" }, "");
+  check("connection test recovers from a retired model", t.ok === true && /unavailable.*gemini-3\.7-flash/i.test(t.message), t.message.slice(0, 110));
+  check("retry really used the default model", urls[1]?.includes("gemini-3.7-flash"), urls[1]);
+  global.fetch = recordingFetch;
+}
 
 console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : failures + " CHECK(S) FAILED"}\n`);
 process.exit(failures === 0 ? 0 : 1);

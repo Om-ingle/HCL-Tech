@@ -39,6 +39,7 @@ export function AiSettings() {
   if (!settingsOpen) return null;
 
   const info = meta?.providers[provider];
+  const modelOptions = info?.models ?? [];
   const status = meta?.status;
   const payload = { provider, model, apiKey: apiKey || undefined, mode, enabled };
 
@@ -124,16 +125,34 @@ export function AiSettings() {
 
         {/* Model */}
         <label className="mt-4 block text-sm font-medium">Model</label>
-        <input
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          list="model-suggestions"
-          placeholder={info?.defaultModel}
+        <select
+          value={modelOptions.some((m) => m.id === model) ? model : "__custom"}
+          onChange={(e) => {
+            setModel(e.target.value === "__custom" ? "" : e.target.value);
+            setTest(null);
+          }}
           className="mt-1 w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-route"
-        />
-        <datalist id="model-suggestions">
-          {info?.models.map((m) => <option key={m} value={m} />)}
-        </datalist>
+        >
+          {modelOptions.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label} · {m.cost === "free" ? "Free" : m.cost === "free-tier" ? "Free tier" : "Paid"}
+            </option>
+          ))}
+          <option value="__custom">Custom model…</option>
+        </select>
+        {info?.note && <p className="mt-1 text-xs text-muted">{info.note}</p>}
+        {!modelOptions.some((m) => m.id === model) && (
+          <input
+            value={model}
+            onChange={(e) => {
+              setModel(e.target.value);
+              setTest(null);
+            }}
+            placeholder={info?.defaultModel}
+            spellCheck={false}
+            className="mt-2 w-full rounded-xl border border-line bg-surface px-3 py-2 font-mono text-sm outline-none focus:border-route"
+          />
+        )}
 
         {/* API key */}
         <label className="mt-4 block text-sm font-medium">API key</label>

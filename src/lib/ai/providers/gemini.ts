@@ -40,12 +40,27 @@ async function generate(req: LLMRequest, cfg: ResolvedAiConfig, jsonMode = false
   });
   if (!res.ok) throw new Error(`Gemini ${res.status}: ${await errorBody(res)}`);
   const data = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
+    candidates?: { finishReason?: string; content?: { parts?: { text?: string; thought?: boolean }[] } }[];
+    promptFeedback?: { blockReason?: string };
   };
-  const text = (data.candidates?.[0]?.content?.parts ?? [])
+  const cand = data.candidates?.[0];
+  // Thought-summary parts (thought: true) are internal reasoning — never part
+  // of the answer text, so filter them out before joining.
+  const text = (cand?.content?.parts ?? [])
+    .filter((p) => !p.thought)
     .map((p) => p.text ?? "")
     .join("")
     .trim();
+  if (!text) {
+    // Report WHY (token starve / safety block / empty) so callers fall back with
+    // a visible reason instead of an opaque "no text returned".
+    const why = data.promptFeedback?.blockReason
+      ? `blocked: ${data.promptFeedback.blockReason}`
+      : cand?.finishReason
+        ? `finishReason: ${cand.finishReason}`
+        : "no text parts in response";
+    throw new Error(`Gemini returned no text (${why})`);
+  }
   return { text, raw: data };
 }
 

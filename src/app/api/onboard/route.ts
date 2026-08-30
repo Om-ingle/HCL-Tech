@@ -25,7 +25,7 @@ export const POST = route(async (req) => {
     aiStatus,
     resolution,
     dynamicSkills,
-    note,
+    note: note ?? result.note,
     targets: resolution.targets.map((t) => ({
       skillId: t.skillId,
       name: SKILL_BY_ID[t.skillId]?.name ?? t.skillId,

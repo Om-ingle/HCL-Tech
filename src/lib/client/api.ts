@@ -9,7 +9,7 @@ import type { NavigatorView } from "@/lib/domain/nextAction";
 import type { ProfileDraft } from "@/lib/domain/types";
 import type { PublicAiStatus } from "@/lib/ai/config";
 import type { PublicQuestion } from "@/lib/server/assessment";
-import type { ProviderId } from "@/lib/ai/types";
+import type { ModelOption, ProviderId } from "@/lib/ai/types";
 
 // ── Shared response shapes ────────────────────────────────────────────────────
 export interface NavigatorBundle {
@@ -28,7 +28,7 @@ export interface AiStatusResponse {
   status: PublicAiStatus;
   providers: Record<
     ProviderId,
-    { label: string; models: string[]; defaultModel: string; keyHint: string; keyUrl: string; note: string }
+    { label: string; models: ModelOption[]; defaultModel: string; keyHint: string; keyUrl: string; note: string }
   >;
   providerIds: ProviderId[];
 }

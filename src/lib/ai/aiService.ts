@@ -11,6 +11,7 @@ import {
   type PublicAiStatus,
 } from "./config";
 import { getProvider } from "./registry";
+import { PROVIDER_META, type ResolvedAiConfig, type LLMProvider } from "./types";
 import {
   buildAssistantRequest,
   buildExtractionRequest,
@@ -27,6 +28,8 @@ export interface ExtractionOutcome {
   draft: ProfileDraft;
   source: AiSource;
   provider?: string;
+  /** Set when the saved model was retired/invalid and the default was used. */
+  note?: string;
 }
 
 export interface AssistantOutcome {
@@ -116,12 +119,15 @@ export async function extractProfile(text: string, sessionId: string): Promise<E
   if (!provider) return { draft: baseline, source: "fallback" };
 
   try {
-    const raw = await provider.generateStructured(buildExtractionRequest(text), cfg);
+    const { value: raw, note } = await callWithModelFallback(
+      provider, cfg, (c) => provider.generateStructured(buildExtractionRequest(text), c),
+    );
     if (raw && typeof raw === "object") {
       return {
         draft: mergeLlmDraft(baseline, raw as Record<string, unknown>, text),
         source: "llm",
         provider: provider.label,
+        ...(note ? { note } : {}),
       };
     }
   } catch (err) {
@@ -182,7 +188,9 @@ export async function resolveGoalText(
   if (!provider) return { resolution: baseline, source: "fallback", dynamicSkills: [] };
 
   try {
-    const raw = await provider.generateStructured(buildGoalRequest(text), cfg);
+    const { value: raw, note: modelNote } = await callWithModelFallback(
+      provider, cfg, (c) => provider.generateStructured(buildGoalRequest(text), c),
+    );
     if (raw && typeof raw === "object") {
       const obj = raw as Record<string, unknown>;
       const domain = typeof obj.domain === "string" ? obj.domain.trim().slice(0, 40) : undefined;
@@ -211,6 +219,7 @@ export async function resolveGoalText(
         resolution,
         source: "llm",
         provider: provider.label,
+        ...(modelNote ? { note: modelNote } : {}),
         dynamicSkills: dynamicSkillDefsFor(resolution.targets.map((t) => t.skillId)),
       };
     }
@@ -240,9 +249,11 @@ export async function answerQuestion(
     const provider = getProvider(cfg.provider);
     if (provider) {
       try {
-        const r = await provider.generate(buildAssistantRequest(question, ctx, history), cfg);
+        const { value: r, note: modelNote } = await callWithModelFallback(
+          provider, cfg, (c) => provider.generate(buildAssistantRequest(question, ctx, history), c),
+        );
         const text = r.text?.trim();
-        if (text) return { text, source: "llm", provider: provider.label };
+        if (text) return { text, source: "llm", provider: provider.label, ...(modelNote ? { note: modelNote } : {}) };
         throw new Error("Empty response from provider");
       } catch (err) {
         // Keep answering deterministically, but surface WHY in the UI badge so a
@@ -268,7 +279,19 @@ export async function testConnection(input: AiConfigInput, sessionId = ""): Prom
   const cfg = configForTest(input, existingKey);
   if (!cfg.apiKey) return { ok: false, message: "No API key provided." };
   try {
-    return await provider.testConnection(cfg);
+    const first = await provider.testConnection(cfg);
+    if (first.ok) return first;
+    // A retired/invalid model id must not read as "connection broken": retry
+    // once with the provider's current default and say so.
+    const fallbackModel = PROVIDER_META[input.provider]?.defaultModel;
+    if (fallbackModel && fallbackModel !== cfg.model && MODEL_GONE.test(first.message)) {
+      const second = await provider.testConnection({ ...cfg, model: fallbackModel });
+      if (second.ok) {
+        return { ...second, message: `Model "${cfg.model}" is unavailable — retried with ${fallbackModel}. ${second.message}` };
+      }
+      return second;
+    }
+    return first;
   } catch (err) {
     return { ok: false, message: safeErr(err) };
   }
@@ -278,4 +301,27 @@ export async function testConnection(input: AiConfigInput, sessionId = ""): Prom
 function safeErr(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
   return msg.replace(/(key|token|bearer)[=:\s"']*[A-Za-z0-9._-]{6,}/gi, "$1=***").slice(0, 300);
+}
+
+/** Vendor phrasing for "that model id doesn't exist (any more)". */
+const MODEL_GONE = /\b404\b|not found|not_found|no such model|does not exist|model.*(retired|deprecated|unsupported|unavailable)|unsupported model|invalid model/i;
+
+/**
+ * Run a provider call; if the vendor rejects the SAVED model as retired/invalid,
+ * retry once with that provider's current default and surface a clear note.
+ * A retired slug in the DB must never look like "AI is broken".
+ */
+async function callWithModelFallback<T>(
+  provider: LLMProvider,
+  cfg: ResolvedAiConfig,
+  fn: (cfg: ResolvedAiConfig) => Promise<T>,
+): Promise<{ value: T; note?: string }> {
+  try {
+    return { value: await fn(cfg) };
+  } catch (err) {
+    const fallbackModel = PROVIDER_META[cfg.provider]?.defaultModel;
+    if (!fallbackModel || fallbackModel === cfg.model || !MODEL_GONE.test(safeErr(err))) throw err;
+    const value = await fn({ ...cfg, model: fallbackModel });
+    return { value, note: `Saved model "${cfg.model}" is unavailable — used ${fallbackModel} instead.` };
+  }
 }

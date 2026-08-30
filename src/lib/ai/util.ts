@@ -64,8 +64,12 @@ type GenFn = (req: LLMRequest, cfg: ResolvedAiConfig) => Promise<LLMResult>;
 export async function pingWith(cfg: ResolvedAiConfig, gen: GenFn): Promise<TestResult> {
   const start = Date.now();
   try {
+    // Reasoning/thinking models count internal thought tokens against
+    // maxOutputTokens — a tiny cap (8) gets burned before any text is emitted,
+    // which read as "Connected, but no text returned". 256 is still a trivial
+    // ping but leaves room for reasoning + "ok".
     const r = await gen(
-      { messages: [{ role: "user", content: "Reply with the single word: ok" }], maxTokens: 8, temperature: 0 },
+      { messages: [{ role: "user", content: "Reply with the single word: ok" }], maxTokens: 256, temperature: 0 },
       cfg,
     );
     const ok = !!r.text;
