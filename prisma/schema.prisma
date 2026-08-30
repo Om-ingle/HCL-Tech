@@ -1,6 +1,10 @@
 // Learning Navigator — persistence layer (PostgreSQL / Supabase via Prisma).
 // Deliberately minimal: 4 dynamic tables + 1 singleton AI config row.
 // Static catalog (skills / roles / resources / quizzes) lives in code, not the DB.
+//
+// Multi-goal: one LearnerProfile row IS one route (its own goal, roadmap
+// versions, step states, events). `ownerId` links routes to a Supabase Auth
+// user; null = anonymous guest route or demo persona.
 
 generator client {
   provider = "prisma-client-js"
@@ -25,12 +29,16 @@ model LearnerProfile {
   interests       String   @default("[]") // JSON string[]
   knownSkills     String   @default("[]") // JSON {skillId, proficiency}[]
   preferences     String   @default("{}") // JSON object (weights, biases)
+  // Supabase Auth user id when this route belongs to an account; null = guest.
+  ownerId         String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   paths  LearningPath[]
   steps  StepState[]
   events Event[]
+
+  @@index([ownerId])
 }
 
 model LearningPath {
@@ -72,11 +80,13 @@ model Event {
   @@index([profileId])
 }
 
-// Per-session runtime AI configuration (anonymous browser session, see
-// src/lib/server/session.ts — the row id IS the session id). API key is stored
-// server-side ONLY and never returned to the browser un-masked. There is
-// deliberately NO global row: one visitor's key must never become another
-// visitor's provider.
+// Per-session (or per-user) runtime AI configuration. The row id is the
+// anonymous browser session id (ai_sid cookie) for guests, or "u-<auth user
+// id>" once authenticated — so a saved key persists with the account across
+// devices but is still never global and never shared between users.
+// API key is stored server-side ONLY and never returned to the browser
+// un-masked. There is deliberately NO global row: one visitor's key must
+// never become another visitor's provider.
 model AiConfig {
   id        String   @id @default("singleton")
   provider  String   @default("")

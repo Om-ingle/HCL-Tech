@@ -8,12 +8,14 @@ import {
   saveProfile,
 } from "@/lib/server/service";
 import { fail, ok, parseBody, route } from "@/lib/server/http";
+import { guardProfile } from "@/lib/server/auth";
 
 export const runtime = "nodejs";
 
 // Feedback chips tune preferences and reroute future recommendations.
 export const POST = route(async (req) => {
   const { profileId, signal, stepId, resourceId } = await parseBody(req, feedbackSchema);
+  await guardProfile(profileId);
   const profile = await loadProfile(profileId);
   if (!profile) return fail("Profile not found.", 404);
 

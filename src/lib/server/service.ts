@@ -40,7 +40,11 @@ export async function loadProfile(id: string): Promise<LearnerProfile | null> {
   return profile;
 }
 
-export async function createProfile(input: ProfileInput, fixedId?: string): Promise<LearnerProfile> {
+export async function createProfile(
+  input: ProfileInput,
+  fixedId?: string,
+  ownerId?: string | null,
+): Promise<LearnerProfile> {
   // Register AI-inferred skills before anything resolves target ids.
   const dynamic = ensureDynamicSkills(input.dynamicSkills ?? []);
   const dynamicSkills = dynamicSkillDefsFor(dynamic.map((s) => s.id));
@@ -61,6 +65,7 @@ export async function createProfile(input: ProfileInput, fixedId?: string): Prom
       ...(input.targetSkillIds?.length ? { targetSkillIds: input.targetSkillIds } : {}),
       ...(dynamicSkills.length ? { dynamicSkills } : {}),
     },
+    ownerId: ownerId ?? null,
   };
   const row = profileToRow(profile);
   const created = fixedId
@@ -75,6 +80,68 @@ export async function createProfile(input: ProfileInput, fixedId?: string): Prom
 
 export async function saveProfile(profile: LearnerProfile): Promise<void> {
   await prisma.learnerProfile.update({ where: { id: profile.id }, data: profileToRow(profile) });
+  // Shared learner knowledge: skills gained on one route are the learner's,
+  // so mirror them into their other routes (max proficiency wins).
+  if (profile.ownerId) await propagateKnownSkills(profile);
+}
+
+/** Merge `skills` into every other route the owner has (max proficiency). */
+async function propagateKnownSkills(profile: LearnerProfile): Promise<void> {
+  const siblings = await prisma.learnerProfile.findMany({
+    where: { ownerId: profile.ownerId, id: { not: profile.id } },
+    select: { id: true, knownSkills: true },
+  });
+  for (const sib of siblings) {
+    let existing: KnownSkill[] = [];
+    try {
+      existing = JSON.parse(sib.knownSkills || "[]");
+    } catch {
+      existing = [];
+    }
+    const merged = mergeKnownSkills(existing, profile.knownSkills);
+    if (JSON.stringify(merged) !== JSON.stringify(existing)) {
+      await prisma.learnerProfile.update({
+        where: { id: sib.id },
+        data: { knownSkills: JSON.stringify(merged) },
+      });
+    }
+  }
+}
+
+/** Union of two known-skill lists; the higher proficiency wins per skill. */
+export function mergeKnownSkills(a: KnownSkill[], b: KnownSkill[]): KnownSkill[] {
+  const map = new Map<string, number>();
+  for (const k of [...a, ...b]) {
+    map.set(k.skillId, Math.max(map.get(k.skillId) ?? 0, k.proficiency));
+  }
+  // Stable order: a's order first, then new skills from b.
+  const order: string[] = [...a.map((k) => k.skillId), ...b.map((k) => k.skillId)];
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const id of order) {
+    if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  return ids.map((skillId) => ({ skillId, proficiency: map.get(skillId) ?? 0 }));
+}
+
+/** The account's accumulated knowledge across all its routes. */
+export async function accountKnownSkills(ownerId: string): Promise<KnownSkill[]> {
+  const rows = await prisma.learnerProfile.findMany({
+    where: { ownerId },
+    select: { knownSkills: true },
+  });
+  let all: KnownSkill[] = [];
+  for (const r of rows) {
+    try {
+      all = mergeKnownSkills(all, JSON.parse(r.knownSkills || "[]"));
+    } catch {
+      /* skip malformed rows */
+    }
+  }
+  return all;
 }
 
 export async function deleteProfileCascade(id: string): Promise<void> {
@@ -174,6 +241,47 @@ export async function logEvent(profileId: string, type: string, payload: unknown
 
 export async function recentEvents(profileId: string, take = 50) {
   return prisma.event.findMany({ where: { profileId }, orderBy: { createdAt: "desc" }, take });
+}
+
+// ── Routes (multi-goal: one LearnerProfile per route) ────────────────────────
+
+/** Lightweight card data for a learner's saved routes (homepage "Your routes"). */
+export interface RouteSummary {
+  profileId: string;
+  roleName: string;
+  goalText: string;
+  progressPct: number;
+  currentPhase: string | null;
+  nextAction: string | null;
+  stepsDone: number;
+  stepsTotal: number;
+  updatedAt: Date;
+}
+
+export async function listRoutesForUser(ownerId: string): Promise<RouteSummary[]> {
+  const rows = await prisma.learnerProfile.findMany({
+    where: { ownerId },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, updatedAt: true },
+  });
+  const summaries: RouteSummary[] = [];
+  for (const row of rows) {
+    const profile = await loadProfile(row.id);
+    if (!profile) continue;
+    const { view, gap } = await buildNavigator(profile);
+    summaries.push({
+      profileId: profile.id,
+      roleName: gap.roleName,
+      goalText: profile.goalText,
+      progressPct: view?.progress.overallPct ?? 0,
+      currentPhase: view ? view.phases[view.progress.currentPhaseIndex]?.title ?? null : null,
+      nextAction: view?.nextAction?.step.title ?? null,
+      stepsDone: view?.progress.completedSteps ?? 0,
+      stepsTotal: view?.progress.totalSteps ?? 0,
+      updatedAt: row.updatedAt,
+    });
+  }
+  return summaries;
 }
 
 // ── Assistant context ─────────────────────────────────────────────────────────

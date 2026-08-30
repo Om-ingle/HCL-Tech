@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { PublicAiStatus } from "@/lib/ai/config";
+import type { AuthUser } from "@/lib/client/api";
 
 export interface RerouteInfo {
   changes: string[];
@@ -12,6 +13,16 @@ export interface RerouteInfo {
 interface AppState {
   profileId: string | null;
   setProfileId: (id: string | null) => void;
+
+  /** Signed-in account (session cookies are the source of truth; this is a cache). */
+  user: AuthUser | null;
+  setUser: (u: AuthUser | null) => void;
+  /** False when the server has no Supabase auth env vars → hide all auth UI. */
+  authConfigured: boolean;
+  setAuthConfigured: (v: boolean) => void;
+
+  authOpen: boolean;
+  setAuthOpen: (v: boolean) => void;
 
   aiStatus: PublicAiStatus | null;
   setAiStatus: (s: PublicAiStatus | null) => void;
@@ -32,6 +43,14 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       profileId: null,
       setProfileId: (id) => set({ profileId: id }),
+
+      user: null,
+      setUser: (u) => set({ user: u }),
+      authConfigured: false,
+      setAuthConfigured: (v) => set({ authConfigured: v }),
+
+      authOpen: false,
+      setAuthOpen: (v) => set({ authOpen: v }),
 
       aiStatus: null,
       setAiStatus: (s) => set({ aiStatus: s }),

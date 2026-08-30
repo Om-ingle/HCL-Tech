@@ -108,6 +108,8 @@ export interface LearnerProfile {
   interests: string[];
   knownSkills: KnownSkill[];
   preferences: Preferences;
+  /** Supabase Auth user id when this route belongs to an account; null = guest. */
+  ownerId?: string | null;
 }
 
 // A partial profile produced by extraction (LLM or fallback), before confirm.

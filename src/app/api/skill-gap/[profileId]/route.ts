@@ -1,6 +1,7 @@
 import { analyzeSkillGap } from "@/lib/domain/skillGap";
 import { recommend } from "@/lib/domain/recommend";
 import { discoveryPool, loadProfile, statesMap } from "@/lib/server/service";
+import { guardProfile } from "@/lib/server/auth";
 import { fail, ok, route } from "@/lib/server/http";
 
 export const runtime = "nodejs";
@@ -9,6 +10,7 @@ type Ctx = { params: { profileId: string } };
 
 // Skill-gap analysis (mastered / partial / missing, ordered) + top recommendations.
 export const GET = route(async (_req, { params }: Ctx) => {
+  await guardProfile(params.profileId);
   const profile = await loadProfile(params.profileId);
   if (!profile) return fail("Profile not found.", 404);
 

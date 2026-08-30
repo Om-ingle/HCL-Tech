@@ -1,5 +1,6 @@
 import { buildNavigator, loadProfile, recentEvents, statesMap } from "@/lib/server/service";
 import { skillName } from "@/lib/catalog";
+import { guardProfile } from "@/lib/server/auth";
 import { fail, ok, route } from "@/lib/server/http";
 
 export const runtime = "nodejs";
@@ -38,6 +39,7 @@ function computeStreak(dates: Date[]): number {
 }
 
 export const GET = route(async (_req, { params }: Ctx) => {
+  await guardProfile(params.profileId);
   const profile = await loadProfile(params.profileId);
   if (!profile) return fail("Profile not found.", 404);
 

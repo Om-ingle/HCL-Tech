@@ -10,6 +10,7 @@ import {
   saveProfile,
 } from "@/lib/server/service";
 import { fail, ok, parseBody, route } from "@/lib/server/http";
+import { guardProfile } from "@/lib/server/auth";
 import type { LearnerProfile } from "@/lib/domain/types";
 
 export const runtime = "nodejs";
@@ -17,6 +18,7 @@ export const runtime = "nodejs";
 // "What if" controls: change weekly hours and/or target role, then reroute.
 export const POST = route(async (req) => {
   const { profileId, weeklyHours, targetRole } = await parseBody(req, simulateSchema);
+  await guardProfile(profileId);
   const loaded = await loadProfile(profileId);
   if (!loaded) return fail("Profile not found.", 404);
 

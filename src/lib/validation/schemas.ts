@@ -112,5 +112,13 @@ export const aiConfigSchema = z.object({
   enabled: z.boolean().default(true),
 });
 
+// Email/password accounts (Supabase Auth). profileId is the guest route the
+// browser is currently on — claimed by the account on signup/login.
+export const credentialsSchema = z.object({
+  email: z.string().email().max(200),
+  password: z.string().min(8).max(100),
+  profileId: z.string().max(60).optional(),
+});
+
 export type ProfileInput = z.infer<typeof profileInputSchema>;
 export type AiConfigInput = z.infer<typeof aiConfigSchema>;

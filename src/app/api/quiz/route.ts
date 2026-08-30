@@ -1,5 +1,6 @@
 import { latestRoadmap, loadProfile } from "@/lib/server/service";
 import { findStep, questionsForSkills, toPublic } from "@/lib/server/assessment";
+import { guardProfile } from "@/lib/server/auth";
 import { ok, route } from "@/lib/server/http";
 
 export const runtime = "nodejs";
@@ -17,6 +18,7 @@ export const GET = route(async (req) => {
   if (skillsParam) {
     skillIds = skillsParam.split(",").map((s) => s.trim()).filter(Boolean);
   } else if (profileId && stepId) {
+    await guardProfile(profileId);
     const profile = await loadProfile(profileId);
     const roadmap = profile ? await latestRoadmap(profileId) : null;
     const found = roadmap ? findStep(roadmap, stepId) : null;

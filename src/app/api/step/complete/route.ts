@@ -9,6 +9,7 @@ import {
   setStepStatus,
 } from "@/lib/server/service";
 import { findStep } from "@/lib/server/assessment";
+import { guardProfile } from "@/lib/server/auth";
 import { fail, ok, parseBody, route } from "@/lib/server/http";
 
 export const runtime = "nodejs";
@@ -16,6 +17,7 @@ export const runtime = "nodejs";
 // Mark a step complete → raise its skills to working knowledge (no reroute).
 export const POST = route(async (req) => {
   const { profileId, stepId } = await parseBody(req, stepActionSchema);
+  await guardProfile(profileId);
   const profile = await loadProfile(profileId);
   if (!profile) return fail("Profile not found.", 404);
   const roadmap = await latestRoadmap(profileId);

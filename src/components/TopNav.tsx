@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import { Compass, Map, Target, LayoutDashboard, Sparkles, MessageCircle, Check, CircleDot, Sun, Moon } from "lucide-react";
+import { Compass, Map, Target, LayoutDashboard, Sparkles, MessageCircle, Check, CircleDot, Sun, Moon, UserRound, LogIn } from "lucide-react";
 import { api } from "@/lib/client/api";
 import { useAppStore } from "@/store/useAppStore";
 import { cx } from "./ui";
@@ -18,7 +18,7 @@ const LINKS = [
 export function TopNav() {
   const pathname = usePathname();
   const router = useRouter();
-  const { profileId, aiStatus, setSettingsOpen, setAssistantOpen, setProfileId, fireReroute } = useAppStore();
+  const { profileId, aiStatus, setSettingsOpen, setAssistantOpen, setProfileId, fireReroute, user, authConfigured, setAuthOpen } = useAppStore();
   const [seeding, setSeeding] = useState(false);
   const { dark, toggle, ready } = useTheme();
 
@@ -115,6 +115,29 @@ export function TopNav() {
               </span>
             )}
           </button>
+
+          {/* Account: email chip when signed in, "Log in" when auth is available.
+              Guests without auth configured see nothing — the app stays fully
+              usable anonymously. */}
+          {authConfigured && (
+            <button
+              onClick={() => setAuthOpen(true)}
+              className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1.5 text-sm hover:border-route/40 sm:px-3"
+              title={user ? user.email ?? "Account" : "Log in to save your routes across devices"}
+            >
+              {user ? (
+                <>
+                  <UserRound className="h-4 w-4 shrink-0 text-route" />
+                  <span className="hidden max-w-[10rem] truncate font-medium md:inline">{user.email}</span>
+                </>
+              ) : (
+                <>
+                  <LogIn className="h-4 w-4 shrink-0 text-muted" />
+                  <span className="hidden text-muted sm:inline">Log in</span>
+                </>
+              )}
+            </button>
+          )}
 
           <button
             onClick={toggle}

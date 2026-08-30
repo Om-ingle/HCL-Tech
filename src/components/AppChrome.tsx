@@ -7,17 +7,28 @@ import { TopNav } from "./TopNav";
 import { AiSettings } from "./AiSettings";
 import { RerouteOverlay } from "./RerouteOverlay";
 import { Assistant } from "./Assistant";
+import { AuthDialog } from "./AuthDialog";
 
 export function AppChrome({ children }: { children: React.ReactNode }) {
   const setAiStatus = useAppStore((s) => s.setAiStatus);
+  const setUser = useAppStore((s) => s.setUser);
+  const setAuthConfigured = useAppStore((s) => s.setAuthConfigured);
 
-  // Fetch the (key-free) AI status once so the "AI Brain" chip is accurate.
+  // Fetch the (key-free) AI status and the session's user once so the "AI
+  // Brain" chip and the account chip are accurate.
   useEffect(() => {
     api
       .getAiConfig()
       .then((r) => setAiStatus(r.status))
       .catch(() => setAiStatus(null));
-  }, [setAiStatus]);
+    api
+      .auth.me()
+      .then((r) => {
+        setUser(r.user);
+        setAuthConfigured(r.authConfigured);
+      })
+      .catch(() => setAuthConfigured(false));
+  }, [setAiStatus, setUser, setAuthConfigured]);
 
   return (
     <div className="min-h-screen bg-topo">
@@ -26,6 +37,7 @@ export function AppChrome({ children }: { children: React.ReactNode }) {
       <RerouteOverlay />
       <AiSettings />
       <Assistant />
+      <AuthDialog />
     </div>
   );
 }

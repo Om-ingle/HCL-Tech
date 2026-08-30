@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Compass, Wand2, ArrowRight, Sparkles, Cpu, Target, RefreshCw } from "lucide-react";
+import { Compass, Wand2, ArrowRight, Sparkles, Cpu, Target, RefreshCw, Route as RouteIcon } from "lucide-react";
 import { ROLES, SKILLS, skillName } from "@/lib/catalog";
-import { api, type PersonaMeta, type TargetSkill, type GoalResolveResponse } from "@/lib/client/api";
+import { api, type PersonaMeta, type TargetSkill, type GoalResolveResponse, type RouteSummary } from "@/lib/client/api";
 import { useAppStore } from "@/store/useAppStore";
 import { Button, Card, Chip, cx } from "@/components/ui";
 import type {
@@ -29,7 +29,7 @@ const STYLES: { id: LearningStyle; label: string }[] = [
 
 export default function HomePage() {
   const router = useRouter();
-  const { setProfileId, fireReroute, setSettingsOpen } = useAppStore();
+  const { setProfileId, fireReroute, setSettingsOpen, user } = useAppStore();
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +43,11 @@ export default function HomePage() {
   const [dynamicSkills, setDynamicSkills] = useState<GoalResolveResponse["dynamicSkills"]>([]);
   const [personas, setPersonas] = useState<PersonaMeta[]>([]);
   const [seeding, setSeeding] = useState<string | null>(null);
+  // Saved routes for a signed-in learner (multi-goal). Guests see personas.
+  const [routes, setRoutes] = useState<RouteSummary[] | null>(null);
+  // The account's accumulated skills — prefilled into new-route onboarding so
+  // the confirmation screen shows what carries over.
+  const [accountSkills, setAccountSkills] = useState<string[]>([]);
   // Set when the offline engine honestly can't map the goal (dancing, cooking…)
   // and no AI provider is configured — show connect-AI guidance, not a fake route.
   const [unmapped, setUnmapped] = useState<GoalResolution | null>(null);
@@ -50,6 +55,31 @@ export default function HomePage() {
   useEffect(() => {
     api.listPersonas().then((r) => setPersonas(r.personas)).catch(() => {});
   }, []);
+
+  const loadRoutes = useCallback(async () => {
+    if (!user) {
+      setRoutes(null);
+      setAccountSkills([]);
+      return;
+    }
+    try {
+      const r = await api.listRoutes();
+      setRoutes(r.routes);
+      setAccountSkills(r.knownSkillIds ?? []);
+    } catch {
+      setRoutes(null);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    loadRoutes();
+  }, [loadRoutes]);
+
+  function openRoute(r: RouteSummary) {
+    setProfileId(r.profileId);
+    fireReroute([`Continuing your route to ${r.roleName}.`]);
+    router.push("/navigator");
+  }
 
   async function onboard() {
     if (!text.trim()) return;
@@ -66,7 +96,13 @@ export default function HomePage() {
         setUnmapped(r.resolution);
         return;
       }
-      setDraft(r.draft);
+      setDraft(
+        user && accountSkills.length
+          ? // Signed in: what the account already knows shows on the confirm
+            // screen too, not just in the server-side merge at creation time.
+            { ...r.draft, knownSkillIds: Array.from(new Set([...(r.draft.knownSkillIds ?? []), ...accountSkills])) }
+          : r.draft,
+      );
       setSource(r.source);
       setProvider(r.provider);
       setResolution(r.resolution);
@@ -157,26 +193,91 @@ export default function HomePage() {
             </Card>
           )}
 
-          <div className="mt-8">
-            <p className="mb-3 text-center text-sm font-medium text-muted">…or look in on a real learner</p>
-            <div className="grid gap-3 sm:grid-cols-3">
-              {personas.map((p) => (
-                <Card key={p.id} className="flex flex-col p-4">
-                  <div className="text-2xl">{p.emoji}</div>
-                  <p className="mt-1 font-semibold">{p.name}</p>
-                  <p className="mt-1 flex-1 text-xs text-muted">{p.headline}</p>
-                  <Button
-                    variant="soft"
-                    className="mt-3"
-                    loading={seeding === p.id}
-                    onClick={() => loadPersona(p)}
-                  >
-                    View {p.name}'s route <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </Card>
-              ))}
+          {user ? (
+            /* Signed in: their saved routes (multi-goal). Each card is a full
+               independent route — switching just points the browser at that
+               profile id; roadmap/progress live server-side. */
+            <div className="mt-8">
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-sm font-medium text-muted">Your routes</p>
+                <span className="text-xs text-faint">
+                  {routes?.length ? `${routes.length} goal${routes.length === 1 ? "" : "s"}` : ""}
+                </span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {routes === null ? (
+                  <Card className="p-4 text-sm text-muted">Loading your routes…</Card>
+                ) : (
+                  <>
+                    {routes.map((r) => (
+                      <Card key={r.profileId} className="flex flex-col p-4">
+                        <div className="flex items-start gap-2">
+                          <RouteIcon className="mt-0.5 h-4 w-4 shrink-0 text-route" />
+                          <p className="min-w-0 flex-1 truncate font-semibold" title={r.goalText || r.roleName}>
+                            {r.roleName}
+                          </p>
+                          <span className="shrink-0 text-sm font-semibold text-route">{r.progressPct}%</span>
+                        </div>
+                        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-line">
+                          <div className="h-full rounded-full bg-route transition-all" style={{ width: `${r.progressPct}%` }} />
+                        </div>
+                        <p className="mt-2 text-xs text-muted">
+                          {r.currentPhase ? `Current: ${r.currentPhase}` : "Not started yet"}
+                        </p>
+                        {r.nextAction && (
+                          <p className="mt-1 line-clamp-1 text-xs text-faint" title={r.nextAction}>
+                            Next: {r.nextAction}
+                          </p>
+                        )}
+                        <p className="mt-1 text-xs text-faint">
+                          {r.stepsDone}/{r.stepsTotal} steps
+                        </p>
+                        <Button variant="soft" className="mt-3" onClick={() => openRoute(r)}>
+                          Continue route <ArrowRight className="h-4 w-4" />
+                        </Button>
+                      </Card>
+                    ))}
+                    <Card className="flex flex-col items-start justify-center border-dashed p-4">
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          setDraft(null);
+                          document.querySelector("textarea")?.focus();
+                        }}
+                      >
+                        <Wand2 className="h-4 w-4" /> Create a new route
+                      </Button>
+                      <p className="mt-1 text-xs text-faint">
+                        Describe a new goal — your skills carry over.
+                      </p>
+                    </Card>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
+          ) : (
+            /* Guest: the demo personas, exactly as before. */
+            <div className="mt-8">
+              <p className="mb-3 text-center text-sm font-medium text-muted">…or look in on a real learner</p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {personas.map((p) => (
+                  <Card key={p.id} className="flex flex-col p-4">
+                    <div className="text-2xl">{p.emoji}</div>
+                    <p className="mt-1 font-semibold">{p.name}</p>
+                    <p className="mt-1 flex-1 text-xs text-muted">{p.headline}</p>
+                    <Button
+                      variant="soft"
+                      className="mt-3"
+                      loading={seeding === p.id}
+                      onClick={() => loadPersona(p)}
+                    >
+                      View {p.name}'s route <ArrowRight className="h-4 w-4" />
+                    </Button>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <ConfirmDraft

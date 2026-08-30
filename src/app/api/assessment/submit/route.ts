@@ -10,6 +10,7 @@ import {
   setStepStatus,
 } from "@/lib/server/service";
 import { findStep, gradeAnswers } from "@/lib/server/assessment";
+import { guardProfile } from "@/lib/server/auth";
 import { fail, ok, parseBody, route } from "@/lib/server/http";
 
 export const runtime = "nodejs";
@@ -17,6 +18,7 @@ export const runtime = "nodejs";
 // Grade a checkpoint server-side, adapt proficiency, and reroute if warranted.
 export const POST = route(async (req) => {
   const { profileId, stepId, answers } = await parseBody(req, assessmentSubmitSchema);
+  await guardProfile(profileId);
   const profile = await loadProfile(profileId);
   if (!profile) return fail("Profile not found.", 404);
   const roadmap = await latestRoadmap(profileId);

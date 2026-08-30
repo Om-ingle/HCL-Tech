@@ -1,7 +1,7 @@
 import { resolveGoalText } from "@/lib/ai/aiService";
 import { validateSkillNames } from "@/lib/domain/goalResolver";
 import { goalResolveSchema } from "@/lib/validation/schemas";
-import { aiSessionId } from "@/lib/server/session";
+import { aiScopeId } from "@/lib/server/auth";
 import { ok, parseBody, route } from "@/lib/server/http";
 import { SKILL_BY_ID } from "@/lib/catalog";
 
@@ -15,8 +15,9 @@ export const runtime = "nodejs";
  */
 export const POST = route(async (req) => {
   const { text, targetRole } = await parseBody(req, goalResolveSchema);
+  const sid = await aiScopeId();
   const { resolution, source, provider, note, dynamicSkills } = await resolveGoalText(text, targetRole, {
-    sessionId: aiSessionId(),
+    sessionId: sid,
   });
   return ok({
     resolution,

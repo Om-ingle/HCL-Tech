@@ -1,11 +1,13 @@
 import { stepActionSchema } from "@/lib/validation/schemas";
 import { buildNavigator, loadProfile, logEvent, setStepStatus } from "@/lib/server/service";
+import { guardProfile } from "@/lib/server/auth";
 import { fail, ok, parseBody, route } from "@/lib/server/http";
 
 export const runtime = "nodejs";
 
 export const POST = route(async (req) => {
   const { profileId, stepId } = await parseBody(req, stepActionSchema);
+  await guardProfile(profileId);
   const profile = await loadProfile(profileId);
   if (!profile) return fail("Profile not found.", 404);
   await setStepStatus(profileId, stepId, "skipped");

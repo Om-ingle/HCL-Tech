@@ -284,22 +284,25 @@ Biases live in `profile.preferences` (`difficultyBias`, `typeBias`, `domainBias`
 
 | Model | Stores |
 |---|---|
-| `LearnerProfile` | the learner: name, `targetRole` (role id or free text), `goalText`, level/style, weekly hours, timeline, outcome, interests; JSON-string columns: `knownSkills` (`{skillId, proficiency}[]`), `preferences` (target overrides, biases, `dynamicSkills`), `interests` |
+| `LearnerProfile` | one **route**: name, `targetRole` (role id or free text), `goalText`, level/style, weekly hours, timeline, outcome, interests; JSON-string columns: `knownSkills` (`{skillId, proficiency}[]`), `preferences` (target overrides, biases, `dynamicSkills`), `interests`; `ownerId` (Supabase auth user id when this route belongs to an account, null = guest) |
 | `LearningPath` | one roadmap **version**: `version`, `phases` (JSON `Phase[]`), `rationale` (JSON: summary/strategy/how) |
 | `StepState` | per-step status (`locked|available|in_progress|completed|skipped`) + optional score; unique per (profile, step) |
 | `Event` | history: `profile_created|completion|assessment|feedback|adaptation|time_change|goal_change` + JSON payload (drives the dashboard activity feed) |
-| `AiConfig` | per-session AI config (row id = session id), §13 |
+| `AiConfig` | per-session or per-account AI config (row id = `ai_sid` session id for guests, `u-<auth user id>` for accounts), §13 |
 
 **Seed** (`POST /api/seed`, "Try a demo" button): idempotently creates the 3 demo personas with **fixed ids** (`persona-ananya`, …) and generates their roadmaps. **Anonymous sessions**: there are no user accounts — the browser holds only a `profileId` in localStorage pointing at a `LearnerProfile` row; a stale id (reset DB) yields a clean 404 which the client treats as "chart a new route".
 
 ---
 
-## 13. Anonymous AI session isolation
+## 13. Accounts and anonymous sessions
 
-This is a deliberate security/privacy design — do not regress it.
+**Accounts (optional, Supabase Auth, email/password only).** `src/lib/server/auth.ts` is the single server-side authority: `currentUser()` reads the @supabase/ssr cookie session; `guardProfile(profileId)` enforces ownership on every profile-scoped API route (an owned route 403s for anyone but its owner; unowned guest/demo routes stay accessible as before); `claimProfileForUser()` attaches the browser's current guest route to the account at signup/login so nothing is restarted. Auth UI is one small dialog (`AuthDialog`), and it disappears entirely when `NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_ANON_KEY` are unset — the app is guest-first.
 
-- `src/middleware.ts` issues an opaque UUID (`ai_sid`) in an **HttpOnly**, SameSite=Lax, Secure-in-prod cookie (1 year). `src/lib/server/session.ts` reads it; route handlers pass it into the AI config layer.
-- `AiConfig`'s **row id IS the session id**: provider/model/key/mode are stored **server-side only**, scoped to that one browser session.
+**Multi-goal**: one `LearnerProfile` row IS one route (its own goal, targets, roadmap versions, step states, events), linked by the nullable `ownerId` column. A signed-in learner's homepage lists their routes (`GET /api/routes`); switching routes is just pointing the store's `profileId` at another row. Creating a new route runs the normal onboarding flow, attaches it to the account, and seeds it with the account's accumulated `knownSkills` (union across routes, max proficiency); skills gained on any route propagate to the others on save. Guests keep the full single-route experience without an account.
+
+**Anonymous AI-config session (still intact).** `src/middleware.ts` issues an opaque UUID (`ai_sid`) in an **HttpOnly**, SameSite=Lax, Secure-in-prod cookie (1 year). `src/lib/server/session.ts` reads it; route handlers pass it into the AI config layer. For authenticated users the AI-config scope becomes `u-<auth user id>` (`aiScopeId()` in `src/lib/server/auth.ts`) — same per-user row on every device, still never global.
+
+- `AiConfig`'s **row id IS the scope id** (session id for guests, `u-<user id>` for accounts): provider/model/key/mode are stored **server-side only**, scoped to that one browser session or account.
 - The API key is **never sent to the browser** — the UI receives only `PublicAiStatus` (provider, model, mode, available, `maskedKey` like `AIz•••••a1b2`). Test-connection can reuse the stored key server-side without re-typing.
 - **There is no global/env fallback configuration.** A fresh or incognito visitor has no session row → Demo/Fallback mode. One visitor's saved key can never become another visitor's provider. Saving a config without a session is refused outright.
 - Switching provider clears the old key (a Gemini key against OpenRouter would 401 forever while the UI claimed it was configured). Saving a key implies `enabled: true`.
@@ -331,6 +334,7 @@ This is a deliberate security/privacy design — do not regress it.
 | Feedback signals | §11 bias updates + regeneration |
 | No roadmap found / new profile | Navigator shows "No route yet — Generate my path" |
 | Unknown/stale profileId in localStorage | API 404 "Profile not found" (not a 500); client clears it and returns home with a friendly message |
+| Owned profile accessed without its account's session | API 403 "This route belongs to another account." (server-side `guardProfile`; UI hiding is never the only check) |
 | Provider server errors | `http.ts` returns a self-diagnosing 503 JSON, not a stack trace |
 
 ---
@@ -345,13 +349,13 @@ Centralized in `PROVIDER_META` (`src/lib/ai/types.ts`): label, curated model lis
 
 Pages (all client components under `src/app`):
 
-- **`/` Home / onboarding** — brand + the one-sentence goal box; extraction → editable profile draft → goal screen (resolved label, provenance "how we read your goal", editable target skills, unknown terms surfaced); "Try a demo" seeds personas.
+- **`/` Home / onboarding** — brand + the one-sentence goal box; extraction → editable profile draft → goal screen (resolved label, provenance "how we read your goal", editable target skills, unknown terms surfaced); "Try a demo" seeds personas. **Signed-in learners see "Your routes"** (their saved multi-goal routes with progress/phase/next action + Continue, and "Create a new route") instead of the persona cards; guests keep personas.
 - **`/navigator`** — the heart. Header card (route-to, progress %, regenerate); body grid: **RouteMap** (phase stations along a vertical route line — statuses locked/available/in-progress/done/skipped, per-step Done/Checkpoint) + sidebar: **NextBestAction**, **Simulate** (hours/week slider + destination select → reroute), Strategy card, **HowWeBuilt** (the roadmap rationale: summary/strategy/how).
 - **`/gap`** — mastered/partial/missing buckets in learning order with per-skill reasons.
 - **`/dashboard`** — day streak, progress metrics, checkpoint average, **Skill passport** (proficiency levels per skill), recent activity (from `Event` rows).
 - **`/step/[id]`** — step detail: resource/module content, external link (real URLs only), quiz checkpoint, **FeedbackBar** (too easy/hard/long/not useful/…).
 
-Global components: **TopNav** (logo, Map/Skill Gap/Dashboard pills, Ask, "AI Brain" chip showing provider + availability, theme toggle), **Assistant** (floating Q&A panel), **AiSettings** (provider/model/key/mode + test + save; masked key), **RerouteOverlay** (the animated "recalculating…" moment + What Changed list), `ui.tsx` (Button/Card/Badge/Spinner), `AppChrome`, `useTheme`.
+Global components: **TopNav** (logo, Map/Skill Gap/Dashboard pills, Ask, "AI Brain" chip showing provider + availability, account chip / Log in, theme toggle), **Assistant** (floating Q&A panel), **AiSettings** (provider/model/key/mode + test + save; masked key), **AuthDialog** (email/password login+signup+logout, Supabase Auth), **RerouteOverlay** (the animated "recalculating…" moment + What Changed list), `ui.tsx` (Button/Card/Badge/Spinner), `AppChrome`, `useTheme`.
 
 UX concepts: the **navigator metaphor** (route, phases as stations, reroute/recalculate, "You are here"), **Next Best Action** (one concrete step + why), **What Changed** after every reroute, **How we built your path** (transparency of the rationale), **Skill Passport** (levels 0–3: none/aware/working/strong), milestones per phase.
 
@@ -407,7 +411,7 @@ No unit-test framework. Two Node verification scripts (run with `node scripts/�
 ## 21. Deployment
 
 - **Vercel** (no `vercel.json` — default Next.js integration). Production build: `npm run build` = `prisma migrate deploy && next build` (migrations are applied from the build step); `postinstall` runs `prisma generate`.
-- **Environment variables by name only**: `DATABASE_URL` (transaction pooler), `DIRECT_URL` (session pooler, migrations); optional `SEARCH_PROVIDER=tavily` + `SEARCH_API_KEY` (external discovery, off unless set). There are deliberately **no AI key env vars in use** — runtime AI config is per-session in the DB (§13). The `LLM_*`/`AI_MODE` block in `.env.example` is stale and ignored by the code.
+- **Environment variables by name only**: `DATABASE_URL` (transaction pooler), `DIRECT_URL` (session pooler, migrations); optional `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` (enable accounts — without them all auth UI is hidden and the app is guest-only); optional `SEARCH_PROVIDER=tavily` + `SEARCH_API_KEY` (external discovery, off unless set). There are deliberately **no AI key env vars in use** — runtime AI config is per-session/per-user in the DB (§13). The `LLM_*`/`AI_MODE` block in `.env.example` is stale and ignored by the code.
 - Supabase provides the Postgres instance; the app holds no other infrastructure. First deploy of a fresh DB: run `db:deploy` (or rely on the build step) — the schema is a single init migration.
 - Considerations: serverless functions must reach Supabase (pooler URLs); AI calls happen server-side only, so vendor egress comes from the deploy region; the app works with zero configured AI keys.
 
@@ -434,7 +438,8 @@ No unit-test framework. Two Node verification scripts (run with `node scripts/�
 4. **Never invent URLs.** Links come only from the curated catalog, the canonical registry, or a real search response. The LLM returns skill names, not resources.
 5. **Never silently bypass a user-selected working LLM.** If a key exists and mode ≠ demo, the AI-layer tasks call the provider. Fallback only on: no key, demo mode, request failure/timeout, unusable response — and always with a visible note.
 6. **Never expose API keys.** Server-side only, masked in the UI, stripped from error messages/logs; never hardcoded, never a default/fallback key.
-7. **No global AI configuration.** Config is per anonymous session (`ai_sid` → `AiConfig` row). One visitor must never inherit another's provider.
+7. **No global AI configuration.** Config is per scope — the anonymous `ai_sid` session for guests, `u-<user id>` for accounts. One visitor must never inherit another's provider, and the AI session id is never the learner/account identity.
+8. **Enforce ownership server-side.** Every profile-scoped route goes through `guardProfile`; an owned route 403s for anyone but its owner. Never rely on UI hiding for access control.
 8. **Keep fallback honest.** A failed provider call is reported as such; deterministic answers are never presented as "the AI said".
 9. **Keep LLM calls small**: structured output, tight maxTokens, once-per-flow (goal resolution at onboarding only), last-3-message history.
 10. **Preserve the provider abstraction** — new vendor = one adapter + `PROVIDER_META` entry; nothing outside `src/lib/ai` may talk to a vendor.

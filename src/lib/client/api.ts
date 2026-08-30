@@ -50,6 +50,24 @@ export interface PersonaMeta {
   sampleOnboardingText: string;
 }
 
+export interface AuthUser {
+  id: string;
+  email: string | null;
+}
+
+/** One saved route on the homepage ("Your routes") for a signed-in learner. */
+export interface RouteSummary {
+  profileId: string;
+  roleName: string;
+  goalText: string;
+  progressPct: number;
+  currentPhase: string | null;
+  nextAction: string | null;
+  stepsDone: number;
+  stepsTotal: number;
+  updatedAt: string;
+}
+
 /** A target skill the goal resolver inferred, shown on the confirmation screen. */
 export interface TargetSkill {
   skillId: string;
@@ -185,6 +203,28 @@ export const api = {
   saveAiConfig: (input: AiConfigPayload) => post<{ status: PublicAiStatus }>("/api/ai/config", input),
   testAi: (input: AiConfigPayload) =>
     post<{ ok: boolean; message: string; latencyMs?: number; model?: string }>("/api/ai/test", input),
+
+  // Auth (optional accounts — email/password via Supabase Auth)
+  auth: {
+    me: () => req<{ user: AuthUser | null; authConfigured: boolean }>("/api/auth/me"),
+    signup: (email: string, password: string, profileId?: string | null) =>
+      post<{ needsConfirmation: boolean; user: AuthUser | null; claimed: boolean }>("/api/auth/signup", {
+        email,
+        password,
+        profileId: profileId ?? undefined,
+      }),
+    login: (email: string, password: string, profileId?: string | null) =>
+      post<{ user: AuthUser; claimed: boolean }>("/api/auth/login", {
+        email,
+        password,
+        profileId: profileId ?? undefined,
+      }),
+    logout: () => post<{ user: null }>("/api/auth/logout", {}),
+  },
+
+  // Saved routes (multi-goal) for the signed-in learner
+  listRoutes: () =>
+    req<{ routes: RouteSummary[]; user: AuthUser; knownSkillIds: string[] }>("/api/routes"),
 };
 
 export interface SeededPersona {

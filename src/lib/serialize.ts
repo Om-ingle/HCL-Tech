@@ -31,6 +31,7 @@ interface ProfileRow {
   interests: string;
   knownSkills: string;
   preferences: string;
+  ownerId?: string | null;
 }
 
 export function profileFromRow(row: ProfileRow): LearnerProfile {
@@ -47,6 +48,7 @@ export function profileFromRow(row: ProfileRow): LearnerProfile {
     interests: safeParse<string[]>(row.interests, []),
     knownSkills: safeParse<KnownSkill[]>(row.knownSkills, []),
     preferences: safeParse<Preferences>(row.preferences, {}),
+    ownerId: row.ownerId ?? null,
   };
 }
 
@@ -63,6 +65,7 @@ export function profileToRow(profile: LearnerProfile) {
     interests: JSON.stringify(profile.interests ?? []),
     knownSkills: JSON.stringify(profile.knownSkills ?? []),
     preferences: JSON.stringify(profile.preferences ?? {}),
+    ...(profile.ownerId !== undefined ? { ownerId: profile.ownerId } : {}),
   };
 }
 

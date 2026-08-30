@@ -1,7 +1,7 @@
 import { extractProfile, getAiStatus, resolveGoalText } from "@/lib/ai/aiService";
 import { SKILL_BY_ID } from "@/lib/catalog";
 import { onboardSchema } from "@/lib/validation/schemas";
-import { aiSessionId } from "@/lib/server/session";
+import { aiScopeId } from "@/lib/server/auth";
 import { ok, parseBody, route } from "@/lib/server/http";
 
 export const runtime = "nodejs";
@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 // exactly what was inferred and let the learner edit it.
 export const POST = route(async (req) => {
   const { text } = await parseBody(req, onboardSchema);
-  const sid = aiSessionId();
+  const sid = await aiScopeId();
   const [result, aiStatus] = await Promise.all([extractProfile(text, sid), getAiStatus(sid)]);
   // The drafted role is a guess from the same sentence, so it must not outrank
   // what the goal text itself says (§13: never silently swap in another role).

@@ -11,6 +11,7 @@ import {
   saveProfile,
 } from "@/lib/server/service";
 import { fail, ok, parseBody, route } from "@/lib/server/http";
+import { guardProfile } from "@/lib/server/auth";
 import type { LearnerProfile } from "@/lib/domain/types";
 
 export const runtime = "nodejs";
@@ -18,6 +19,7 @@ export const runtime = "nodejs";
 type Ctx = { params: { id: string } };
 
 export const GET = route(async (_req, { params }: Ctx) => {
+  await guardProfile(params.id);
   const profile = await loadProfile(params.id);
   if (!profile) return fail("Profile not found.", 404);
   const bundle = await buildNavigator(profile);
@@ -26,6 +28,7 @@ export const GET = route(async (_req, { params }: Ctx) => {
 
 // Update editable fields, then reroute (regenerate) the roadmap.
 export const PATCH = route(async (req, { params }: Ctx) => {
+  await guardProfile(params.id);
   const existing = await loadProfile(params.id);
   if (!existing) return fail("Profile not found.", 404);
   const patch = await parseBody(req, profileUpdateSchema.omit({ id: true }).partial());
@@ -94,6 +97,7 @@ export const PATCH = route(async (req, { params }: Ctx) => {
 });
 
 export const DELETE = route(async (_req, { params }: Ctx) => {
+  await guardProfile(params.id);
   await deleteProfileCascade(params.id);
   return ok({ deleted: params.id });
 });
