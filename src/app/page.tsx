@@ -29,18 +29,23 @@ const STYLES: { id: LearningStyle; label: string }[] = [
 
 export default function HomePage() {
   const router = useRouter();
-  const { setProfileId, fireReroute } = useAppStore();
+  const { setProfileId, fireReroute, setSettingsOpen } = useAppStore();
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
   const [source, setSource] = useState<"llm" | "fallback">("fallback");
   const [provider, setProvider] = useState<string | undefined>(undefined);
+  const [note, setNote] = useState<string | undefined>(undefined);
+  const [aiAvailable, setAiAvailable] = useState(false);
   const [resolution, setResolution] = useState<GoalResolution | null>(null);
   const [targets, setTargets] = useState<TargetSkill[]>([]);
   const [dynamicSkills, setDynamicSkills] = useState<GoalResolveResponse["dynamicSkills"]>([]);
   const [personas, setPersonas] = useState<PersonaMeta[]>([]);
   const [seeding, setSeeding] = useState<string | null>(null);
+  // Set when the offline engine honestly can't map the goal (dancing, cooking…)
+  // and no AI provider is configured — show connect-AI guidance, not a fake route.
+  const [unmapped, setUnmapped] = useState<GoalResolution | null>(null);
 
   useEffect(() => {
     api.listPersonas().then((r) => setPersonas(r.personas)).catch(() => {});
@@ -50,11 +55,23 @@ export default function HomePage() {
     if (!text.trim()) return;
     setLoading(true);
     setError(null);
+    setUnmapped(null);
     try {
       const r = await api.onboard(text);
+      setNote(r.note);
+      setAiAvailable(r.aiStatus.available);
+      // Out-of-domain goal with no working AI → connect-AI guidance, never a
+      // generic software roadmap pretending to be about dancing.
+      if (r.source === "fallback" && r.resolution.methods.includes("unmapped")) {
+        setUnmapped(r.resolution);
+        return;
+      }
       setDraft(r.draft);
       setSource(r.source);
       setProvider(r.provider);
+      setResolution(r.resolution);
+      setTargets(r.targets);
+      setDynamicSkills(r.dynamicSkills ?? []);
       setResolution(r.resolution);
       setTargets(r.targets);
       setDynamicSkills(r.dynamicSkills ?? []);
@@ -114,6 +131,33 @@ export default function HomePage() {
             {error && <p className="mt-2 text-sm text-bad">{error}</p>}
           </Card>
 
+          {unmapped && (
+            <Card className="mt-4 border-warn/40 p-5">
+              <div className="flex items-center gap-2">
+                <Cpu className="h-4 w-4 text-warn" />
+                <h2 className="text-base font-semibold">
+                  “{unmapped.label}” is outside my offline learning knowledge
+                </h2>
+              </div>
+              <p className="mt-2 text-sm text-muted">
+                {aiAvailable
+                  ? "I won't fake a software roadmap for a goal like this. Your AI provider just failed to answer for it — check the provider/model in settings (free models rate-limit), then retry below."
+                  : "The built-in catalog covers tech skills, and I won't fake a software roadmap for a goal like this. Connect an AI provider and I'll map the real skills behind it — the way I did for battery chemistry."}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button onClick={() => setSettingsOpen(true)}>
+                  <Cpu className="h-4 w-4" /> Open AI Settings
+                </Button>
+                <Button variant="outline" onClick={onboard} loading={loading}>
+                  <RefreshCw className="h-4 w-4" /> Retry this goal
+                </Button>
+              </div>
+              <p className="mt-3 text-xs text-faint">
+                Your goal text is still in the box above — retry works the moment a provider is ready.
+              </p>
+            </Card>
+          )}
+
           <div className="mt-8">
             <p className="mb-3 text-center text-sm font-medium text-muted">…or look in on a real learner</p>
             <div className="grid gap-3 sm:grid-cols-3">
@@ -140,6 +184,8 @@ export default function HomePage() {
           draft={draft}
           source={source}
           provider={provider}
+          note={note}
+          aiAvailable={aiAvailable}
           resolution={resolution}
           targets={targets}
           dynamicSkills={dynamicSkills}
@@ -165,6 +211,8 @@ function ConfirmDraft({
   draft,
   source,
   provider,
+  note,
+  aiAvailable,
   resolution,
   targets,
   dynamicSkills,
@@ -176,6 +224,8 @@ function ConfirmDraft({
   draft: ProfileDraft;
   source: "llm" | "fallback";
   provider?: string;
+  note?: string;
+  aiAvailable: boolean;
   resolution: GoalResolution | null;
   targets: TargetSkill[];
   dynamicSkills: GoalResolveResponse["dynamicSkills"];
@@ -284,9 +334,14 @@ function ConfirmDraft({
         <h2 className="text-lg font-semibold">Here's what I understood</h2>
         <span className="ml-auto inline-flex items-center gap-1 text-xs text-faint">
           {source === "llm" ? <Sparkles className="h-3.5 w-3.5" /> : <Cpu className="h-3.5 w-3.5" />}
-          {source === "llm" ? `read by AI${provider ? ` · ${provider}` : ""}` : "parsed locally (no AI configured)"}
+          {source === "llm"
+            ? `read by AI${provider ? ` · ${provider}` : ""}`
+            : aiAvailable
+              ? "AI unavailable for this call — parsed locally"
+              : "parsed locally (no AI configured)"}
         </span>
       </div>
+      {note && <p className="mt-1 text-xs text-warn">{note}</p>}
       {draft.notes?.map((n, i) => (
         <p key={i} className="mt-1 text-xs text-muted">
           {n}
@@ -419,6 +474,7 @@ const METHOD_LABEL: Record<GoalMethod, string> = {
   domain: "placed your goal in a field",
   llm: "AI proposed skills, checked against our graph",
   starter: "no clear signal — starting from foundations",
+  unmapped: "outside my offline learning knowledge",
 };
 
 /**

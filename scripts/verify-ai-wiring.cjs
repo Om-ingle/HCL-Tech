@@ -8,15 +8,19 @@
  *    REAL HTTP request to its own vendor endpoint, with the selected model in
  *    the request. Fake keys are used, so the vendor answers 401/400 — that
  *    error IS the proof the call happened (offline = DNS error, same proof).
- * 2. Service layer: with an env-configured (fake) key, aiService must attempt
- *    the call and return a deterministic fallback + a visible reason on failure.
- * 3. No key: pure deterministic fallback, no note, no network.
+ * 2. Service layer: a session-scoped (fake) Gemini key — saved exactly the way
+ *    the settings UI saves it — must produce a real call attempt and a
+ *    deterministic fallback + a visible reason when the vendor rejects the key.
+ * 3. No session / no key: pure deterministic fallback, no note, no network.
  *
- * The DB is pointed at an unreachable local port so the runtime AiConfig row
- * (which may hold a real key) can't influence these tests.
+ * Provider-layer tests run with the DB pointed at an unreachable local port so
+ * no real config row can influence them. Section 2 reconnects to the real DB
+ * under a throwaway session id (and deletes it afterwards).
  */
 const path = require("path");
 
+const REAL_DATABASE_URL = process.env.DATABASE_URL || "";
+const REAL_DIRECT_URL = process.env.DIRECT_URL || "";
 process.env.DATABASE_URL = "postgresql://postgres:x@127.0.0.1:1/postgres";
 delete process.env.DIRECT_URL;
 
@@ -76,14 +80,24 @@ for (const id of Object.keys(PROVIDER_META)) {
 check("each provider hits a distinct vendor endpoint", seenHosts.size === Object.keys(PROVIDER_META).length,
   [...seenHosts].join(", "));
 
-// ── 2. Service layer — configured key that fails → graceful, visible fallback ─
-console.log("\n2. Service layer — env-configured (fake) Gemini key: call attempted, then graceful fallback");
-process.env.LLM_PROVIDER = "gemini";
-process.env.LLM_MODEL = "gemini-2.0-flash";
-process.env.LLM_API_KEY = "fake-key-for-wiring-verification-only";
-process.env.AI_MODE = "hybrid";
-// aiService must be required AFTER env is set (config reads env per call, but be explicit).
+// ── 2. Service layer — session-scoped (fake) key → call attempted, graceful fallback ──
+console.log("\n2. Service layer — session-scoped (fake) Gemini key: call attempted, then graceful fallback");
+// Env keys configure nothing any more (by design — no global fallback), so this
+// seeds a throwaway session row exactly the way the settings UI does. Restore
+// the real DB URL (Prisma also loads .env, so just clear the fake values).
+delete process.env.DATABASE_URL;
+if (REAL_DIRECT_URL) process.env.DIRECT_URL = REAL_DIRECT_URL; else delete process.env.DIRECT_URL;
+const { PrismaClient } = require("@prisma/client");
+const realDb = new PrismaClient();
+globalThis.prisma = realDb; // the "@/lib/db" singleton picks this up
+
+const { saveAiConfig, resolveAiConfig } = jiti("../src/lib/ai/config.ts");
 const { answerQuestion, extractProfile, testConnection } = jiti("../src/lib/ai/aiService.ts");
+const SID = "test-session-wiring";
+await saveAiConfig(
+  { provider: "gemini", model: "gemini-2.0-flash", apiKey: "fake-key-for-wiring-verification-only", mode: "hybrid", enabled: true },
+  SID,
+);
 
 const ctx = {
   profileName: "Test", roleName: "Backend Software Engineer", experienceLevel: "intermediate",
@@ -92,13 +106,13 @@ const ctx = {
   nextActionWhy: "Containers come next", overallPct: 30, estimatedWeeksLeft: 12,
 };
 
-const ans = await answerQuestion("What are my biggest gaps?", ctx);
+const ans = await answerQuestion("What are my biggest gaps?", ctx, [], SID);
 check("assistant: source=fallback with a reason note", ans.source === "fallback" && !!ans.note, (ans.note ?? "").slice(0, 90));
 
-const ext = await extractProfile("I'm Maya, I know Python and SQL, 8 hours a week, want to be a data scientist");
+const ext = await extractProfile("I'm Ananya, I know Python and SQL, 8 hours a week, want to be a data scientist", SID);
 check("extraction: still returns a usable deterministic draft", ext.source === "fallback" && !!ext.draft.targetRoleId);
 
-const t = await testConnection({ provider: "gemini", model: "gemini-2.0-flash", apiKey: process.env.LLM_API_KEY });
+const t = await testConnection({ provider: "gemini", model: "gemini-2.0-flash", apiKey: "fake-key-for-wiring-verification-only" });
 check("testConnection reports the real vendor failure", t.ok === false, t.message.slice(0, 80));
 
 // Changing the model changes the request URL (Gemini embeds it in the path).
@@ -111,17 +125,21 @@ try {
 } catch {}
 check("changing the model changes the request", (lastRequest?.url ?? "").includes("gemini-1.5-pro"), lastRequest?.url);
 
-// ── 3. No key at all → pure deterministic mode, no note ───────────────────────
-console.log("\n3. Service layer — no key configured: fully deterministic, no AI call attempted");
-delete process.env.LLM_PROVIDER;
-delete process.env.LLM_MODEL;
-delete process.env.LLM_API_KEY;
+// ── 3. No session / unknown session → pure deterministic mode, no note ───────
+console.log("\n3. Service layer — no session: fully deterministic, no AI call attempted");
 lastRequest = null;
 
 const ans2 = await answerQuestion("How long until I'm done?", ctx);
 check("assistant: deterministic answer, no note, no network", ans2.source === "fallback" && !ans2.note && lastRequest === null);
-const ext2 = await extractProfile("I want to become a Linux kernel developer. I know Python and some C, 8 hours per week.");
+const ext2 = await extractProfile("I want to become a Linux kernel developer. I know Python and some C, 8 hours per week.", "");
 check("extraction: deterministic draft produced", ext2.source === "fallback" && ext2.draft.goalText.length > 10);
+
+const noRow = await resolveAiConfig("session-without-any-saved-row");
+check("unknown session id: unavailable, nothing inherited", noRow.available === false && noRow.source === "none");
+
+// Cleanup: only this suite's throwaway row goes away; learner data untouched.
+await realDb.aiConfig.deleteMany({ where: { id: SID } });
+await realDb.$disconnect();
 
 console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : failures + " CHECK(S) FAILED"}\n`);
 process.exit(failures === 0 ? 0 : 1);

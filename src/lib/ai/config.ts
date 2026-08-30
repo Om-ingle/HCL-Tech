@@ -7,51 +7,48 @@ function defaultModel(provider: ProviderId): string {
 }
 
 /**
- * Resolve the effective AI config, server-side only. Precedence:
- *   1. runtime config row (set via AI Settings), if enabled + has key
- *   2. environment variables
- *   3. none → Demo/Fallback mode (available: false)
- * The raw apiKey never leaves the server (see toPublicStatus for what the UI gets).
+ * Resolve the effective AI config for ONE anonymous browser session, server-side
+ * only. The AiConfig row id IS the session id (HttpOnly cookie set in
+ * middleware) — config is never shared between visitors:
+ *   session has a saved, enabled row with a key → that provider, live
+ *   no session / no row / demo mode → unavailable (Demo/Fallback)
+ * There is deliberately NO global or environment fallback: one visitor's saved
+ * key must never become every anonymous visitor's provider.
+ * The raw apiKey never leaves the server (see toPublicStatus).
  */
-export async function resolveAiConfig(): Promise<ResolvedAiConfig> {
-  const row = await prisma.aiConfig.findUnique({ where: { id: "singleton" } }).catch(() => null);
-  const envProvider = (process.env.LLM_PROVIDER || "").trim() as ProviderId | "";
-  const envKey = (process.env.LLM_API_KEY || "").trim();
-  const envMode = ((process.env.AI_MODE as AiMode) || "hybrid") as AiMode;
-  const mode: AiMode = (row?.mode as AiMode) || envMode || "hybrid";
+export async function resolveAiConfig(sessionId: string): Promise<ResolvedAiConfig> {
+  if (!sessionId) return unavailable();
+
+  const row = await prisma.aiConfig.findUnique({ where: { id: sessionId } }).catch(() => null);
+  const mode = ((row?.mode as AiMode) || "hybrid") as AiMode;
 
   if (mode !== "demo" && row && row.enabled && row.provider && row.apiKey) {
     const provider = row.provider as ProviderId;
-    return {
-      provider,
-      model: row.model || defaultModel(provider),
-      apiKey: row.apiKey,
-      mode,
-      enabled: true,
-      available: true,
-      source: "runtime",
-    };
+    if (PROVIDER_META[provider]) {
+      return {
+        provider,
+        model: row.model || defaultModel(provider),
+        apiKey: row.apiKey,
+        mode,
+        enabled: true,
+        available: true,
+        source: "runtime",
+      };
+    }
   }
 
-  if (mode !== "demo" && envProvider && envKey && PROVIDER_META[envProvider as ProviderId]) {
-    const provider = envProvider as ProviderId;
-    return {
-      provider,
-      model: (process.env.LLM_MODEL || "").trim() || defaultModel(provider),
-      apiKey: envKey,
-      mode,
-      enabled: true,
-      available: true,
-      source: "env",
-    };
-  }
+  // Row exists (or is disabled/demo) — show its provider in the UI, but never
+  // treat it as live without a valid key.
+  return unavailable(row);
+}
 
-  const fallbackProvider = (row?.provider as ProviderId) || (envProvider as ProviderId) || "gemini";
+function unavailable(row?: { provider: string; model: string; mode?: string } | null): ResolvedAiConfig {
+  const provider = (row?.provider as ProviderId) || "gemini";
   return {
-    provider: fallbackProvider,
-    model: row?.model || (process.env.LLM_MODEL || "").trim() || defaultModel(fallbackProvider),
+    provider,
+    model: row?.model || defaultModel(provider),
     apiKey: "",
-    mode,
+    mode: ((row?.mode as AiMode) || "hybrid") as AiMode,
     enabled: false,
     available: false,
     source: "none",
@@ -88,27 +85,40 @@ export function toPublicStatus(cfg: ResolvedAiConfig): PublicAiStatus {
   };
 }
 
-/** Upsert runtime config. If apiKey is omitted, the existing key is preserved. */
-export async function saveAiConfig(input: AiConfigInput): Promise<void> {
-  const existing = await prisma.aiConfig.findUnique({ where: { id: "singleton" } }).catch(() => null);
+/** Upsert runtime config. If apiKey is omitted, the existing key is preserved —
+ *  UNLESS the provider changed, in which case the old key belongs to the old
+ *  provider and must never be silently reused (a Gemini key against OpenRouter
+ *  401s forever and the UI would still claim the provider is configured). */
+export async function saveAiConfig(input: AiConfigInput, sessionId: string): Promise<void> {
+  // Without a session there is nowhere private to store the key — refuse rather
+  // than fall back to any shared location.
+  if (!sessionId) throw new Error("No session — cannot store AI configuration.");
+
+  const existing = await prisma.aiConfig.findUnique({ where: { id: sessionId } }).catch(() => null);
+  const providerChanged = !!existing && existing.provider !== input.provider && !!existing.apiKey;
   const apiKey =
-    input.apiKey !== undefined && input.apiKey !== "" ? input.apiKey : existing?.apiKey ?? "";
+    input.apiKey !== undefined && input.apiKey !== ""
+      ? input.apiKey
+      : providerChanged
+        ? ""
+        : (existing?.apiKey ?? "");
   // A key being saved means the provider is meant to be live. Older UIs could
   // persist enabled=false alongside a key, silently disabling every AI call.
   const enabled = apiKey ? true : (input.enabled ?? true);
+  const model = input.model?.trim() || defaultModel(input.provider);
   await prisma.aiConfig.upsert({
-    where: { id: "singleton" },
+    where: { id: sessionId },
     create: {
-      id: "singleton",
+      id: sessionId,
       provider: input.provider,
-      model: input.model ?? "",
+      model,
       apiKey,
       mode: input.mode ?? "hybrid",
       enabled,
     },
     update: {
       provider: input.provider,
-      model: input.model ?? "",
+      model,
       apiKey,
       mode: input.mode ?? "hybrid",
       enabled,
@@ -130,7 +140,9 @@ export function configForTest(input: AiConfigInput, existingKey: string): Resolv
   };
 }
 
-export async function getStoredKey(): Promise<string> {
-  const row = await prisma.aiConfig.findUnique({ where: { id: "singleton" } }).catch(() => null);
+/** The session's stored key, used only to test a connection without re-typing. */
+export async function getStoredKey(sessionId: string): Promise<string> {
+  if (!sessionId) return "";
+  const row = await prisma.aiConfig.findUnique({ where: { id: sessionId } }).catch(() => null);
   return row?.apiKey ?? "";
 }

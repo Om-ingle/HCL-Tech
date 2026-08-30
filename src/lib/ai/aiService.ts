@@ -38,8 +38,8 @@ export interface AssistantOutcome {
 }
 
 /** Public, key-free status for the UI ("AI Brain: <provider> ✓"). */
-export async function getAiStatus(): Promise<PublicAiStatus> {
-  const cfg = await resolveAiConfig();
+export async function getAiStatus(sessionId: string): Promise<PublicAiStatus> {
+  const cfg = await resolveAiConfig(sessionId);
   return toPublicStatus(cfg);
 }
 
@@ -107,9 +107,9 @@ function mergeLlmDraft(base: ProfileDraft, obj: Record<string, unknown>, rawText
  * provider is available and mode ≠ demo. Any provider error falls back silently
  * (no key material is ever logged).
  */
-export async function extractProfile(text: string): Promise<ExtractionOutcome> {
+export async function extractProfile(text: string, sessionId: string): Promise<ExtractionOutcome> {
   const baseline = extractProfileFallback(text);
-  const cfg = await resolveAiConfig();
+  const cfg = await resolveAiConfig(sessionId);
   if (!cfg.available || cfg.mode === "demo") return { draft: baseline, source: "fallback" };
 
   const provider = getProvider(cfg.provider);
@@ -135,6 +135,8 @@ export interface GoalOutcome {
   resolution: GoalResolution;
   source: AiSource;
   provider?: string;
+  /** Set when a configured provider was tried but the goal call failed. */
+  note?: string;
   /** LLM-inferred skills registered outside the curated catalog, so the client
    *  can persist them with the profile. Empty when nothing new was created. */
   dynamicSkills: DynamicSkillDef[];
@@ -169,11 +171,11 @@ function parseCandidates(v: unknown): { name: string; blurb?: string }[] {
 export async function resolveGoalText(
   text: string,
   targetRole?: string,
-  opts: { roleIsGuess?: boolean } = {},
+  opts: { roleIsGuess?: boolean; sessionId?: string } = {},
 ): Promise<GoalOutcome> {
   const input = buildGoalInput(text, targetRole, opts.roleIsGuess);
   const baseline = resolveGoal(input);
-  const cfg = await resolveAiConfig();
+  const cfg = await resolveAiConfig(opts.sessionId ?? "");
   if (!cfg.available || cfg.mode === "demo") return { resolution: baseline, source: "fallback", dynamicSkills: [] };
 
   const provider = getProvider(cfg.provider);
@@ -194,6 +196,11 @@ export async function resolveGoalText(
         })
         .slice(0, 8);
       const registered = ensureDynamicSkills(newTopics);
+      // "Unusable output" guard: JSON that parses but yields zero usable skills
+      // must count as an AI failure, not an AI success with nothing to show.
+      if (ids.length + registered.length === 0) {
+        throw new Error("model returned no usable candidate skills");
+      }
       const hint: GoalHint = {
         label: typeof obj.goal === "string" ? obj.goal.trim().slice(0, 80) : undefined,
         domain,
@@ -207,19 +214,28 @@ export async function resolveGoalText(
         dynamicSkills: dynamicSkillDefsFor(resolution.targets.map((t) => t.skillId)),
       };
     }
-  } catch (err) {
-    console.warn(`[ai] goal resolution fell back to deterministic (${provider.id}):`, safeErr(err));
+    } catch (err) {
+      // Surface WHY in the UI badge — a failed provider call must never be
+      // presented as "no AI configured".
+      console.warn(`[ai] goal resolution fell back to deterministic (${provider.id}):`, safeErr(err));
+      return {
+        resolution: baseline,
+        source: "fallback",
+        note: `${provider.label} call failed — used local parsing. (${safeErr(err)})`,
+        dynamicSkills: [],
+      };
+    }
+    return { resolution: baseline, source: "fallback", dynamicSkills: [] };
   }
-  return { resolution: baseline, source: "fallback", dynamicSkills: [] };
-}
 
 // ── Assistant Q&A ─────────────────────────────────────────────────────────────
 export async function answerQuestion(
   question: string,
   ctx: AssistantContext,
   history: AssistantHistoryMessage[] = [],
+  sessionId = "",
 ): Promise<AssistantOutcome> {
-  const cfg = await resolveAiConfig();
+  const cfg = await resolveAiConfig(sessionId);
   if (cfg.available && cfg.mode !== "demo") {
     const provider = getProvider(cfg.provider);
     if (provider) {
@@ -245,10 +261,10 @@ export async function answerQuestion(
 }
 
 // ── Connection test (AI Settings) ─────────────────────────────────────────────
-export async function testConnection(input: AiConfigInput): Promise<TestResult> {
+export async function testConnection(input: AiConfigInput, sessionId = ""): Promise<TestResult> {
   const provider = getProvider(input.provider);
   if (!provider) return { ok: false, message: `Unknown provider "${input.provider}".` };
-  const existingKey = await getStoredKey();
+  const existingKey = await getStoredKey(sessionId);
   const cfg = configForTest(input, existingKey);
   if (!cfg.apiKey) return { ok: false, message: "No API key provided." };
   try {

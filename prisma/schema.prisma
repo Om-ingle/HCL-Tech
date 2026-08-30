@@ -72,8 +72,11 @@ model Event {
   @@index([profileId])
 }
 
-// Single-row runtime AI configuration. API key is stored server-side ONLY and
-// never returned to the browser un-masked.
+// Per-session runtime AI configuration (anonymous browser session, see
+// src/lib/server/session.ts — the row id IS the session id). API key is stored
+// server-side ONLY and never returned to the browser un-masked. There is
+// deliberately NO global row: one visitor's key must never become another
+// visitor's provider.
 model AiConfig {
   id        String   @id @default("singleton")
   provider  String   @default("")

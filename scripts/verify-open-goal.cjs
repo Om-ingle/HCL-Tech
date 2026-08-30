@@ -159,8 +159,7 @@ check("every skill is assessable", noQuiz === 0, `${noQuiz} skills have no quest
 // §13: onboarding guesses a role from the same sentence. That guess must never
 // override a goal the text states clearly, or an unusual destination silently
 // becomes the nearest predefined role.
-console.log("\n════ GUESSED ROLE MUST NOT OVERRIDE A CLEAR GOAL ════");
-const GUESS_CASES = [
+console.log("\n════ GUESSED ROLE MUST NOT OVERRIDE A CLEAR GOAL ════");const GUESS_CASES = [
   {
     goalText:
       "I want to become a robotics engineer working on autonomous underwater vehicles. I can code in Python and know basic linear algebra.",
@@ -180,6 +179,30 @@ for (const c of GUESS_CASES) {
   const ok = r.domain === c.expectDomain;
   console.log(`   ${ok ? "✓" : "✗"} "${c.goalText.slice(0, 46)}…" + guess ${c.guess} → ${r.label} [${r.domain}]`);
   check(`guessed role handling for "${c.goalText.slice(0, 30)}"`, ok, `expected ${c.expectDomain}, got ${r.domain}`);
+}
+
+// Out-of-domain goals (dancing, cooking…) must NEVER be forced onto a tech
+// starter route offline — they resolve `unmapped` and the UI asks for an AI
+// provider. Vague-but-tech goals still get the foundations starter.
+console.log("\n════ OUT-OF-DOMAIN GOALS REFUSE A FAKE TECH ROUTE ════");
+const TECH_SEED = new Set(["python", "git", "programming-fundamentals", "linux-cli", "algorithms"]);
+const OUT_OF_DOMAIN = [
+  ["I want to learn dancing", true],
+  ["I want to learn singing", true],
+  ["I want to become a photographer", true],
+  ["I want to learn cooking", true],
+  ["I want to be a music producer", true],
+  ["I want a good job in tech, not sure what yet", false],
+  ["I want to make mobile apps", false],
+];
+for (const [goal, expectUnmapped] of OUT_OF_DOMAIN) {
+  const r = resolveGoal({ goalText: goal });
+  const techSeeded = r.targets.some((x) => TECH_SEED.has(x.skillId));
+  const ok = expectUnmapped
+    ? r.methods.includes("unmapped") && !techSeeded && r.targets.length === 0
+    : !r.methods.includes("unmapped");
+  console.log(`   ${ok ? "✓" : "✗"} "${goal}" → [${r.methods}] "${r.label}" targets=[${r.targets.map((x) => x.skillId).join(",")}]`);
+  check(`out-of-domain handling for "${goal}"`, ok);
 }
 
 console.log(failures === 0 ? "\n✅ ALL CHECKS PASSED\n" : `\n❌ ${failures} CHECK(S) FAILED\n`);

@@ -177,6 +177,13 @@ export function AiSettings() {
           {mode === "demo" && "No API calls — everything runs on the built-in fallback."}
         </p>
 
+        {status?.hasKey && status.provider !== provider && (
+          <p className="mt-2 text-xs text-warn">
+            Switching from {status.providerLabel}? The saved key belongs to it and won't work here —
+            paste the new provider's key below.
+          </p>
+        )}
+
         {test && (
           <div
             className={cx(

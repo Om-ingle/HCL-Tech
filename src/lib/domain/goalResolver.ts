@@ -28,6 +28,12 @@ export interface GoalHint {
 
 const STARTER_SEED = ["programming-fundamentals", "python", "git", "linux-cli", "algorithms"];
 
+// Signals that a vague goal at least lives in tech, so a foundations route is
+// an honest starting point. Without one of these ("learn dancing", "cooking"),
+// the starter seed would be a fake tech roadmap — we refuse instead.
+const TECH_INTENT =
+  /\b(tech|it|software|code|coder|coding|program|programming|programmer|develop|developer|engineering|engineer|computer|computing|web|website|app|application|data|analytics|database|ai|a\.i\.|ml|machine learning|deep learning|cloud|devops|security|cyber|frontend|backend|fullstack|full-stack|game|games|kernel|embedded|robot|robotics|quantum|blockchain|sre|qa|tester)\b/i;
+
 const STOPWORDS = new Set(
   ("i want to be become a an the as work working job career learn learning master become" +
     " get into for in on of and or with my me myself want wanna would like hoping hope" +
@@ -316,18 +322,28 @@ export function resolveGoal(input: ResolveGoalInput, hint?: GoalHint): GoalResol
     }
   }
 
-  // 5 ── Nothing recognized → foundational starter route (never a dead end).
+  // 5 ── Nothing recognized. Two very different situations share this branch:
+  //      a vague-but-clearly-tech goal (fine to start from foundations) and a
+  //      goal that is simply outside this catalog's world (dancing, cooking,
+  //      photography). Forcing the second onto a Python/Git route would be a
+  //      lie — mark it unmapped and let the UI ask for an AI provider instead.
   if (targets.size === 0) {
-    methods.push("starter");
-    for (const id of STARTER_SEED) addTarget(id, 2);
-    // Show the learner's own words (minus "I want to…") rather than a generic
-    // tech label — even unparseable goals deserve their name on screen.
     label = labelFromText(text, "Your Goal");
-    domain = domain || "Programming";
-    confidence = 0.25;
-    notes.push(
-      "We couldn't map this goal to a known area yet, so we started you on programming foundations — edit the target skills to steer it.",
-    );
+    if (TECH_INTENT.test(text)) {
+      methods.push("starter");
+      for (const id of STARTER_SEED) addTarget(id, 2);
+      domain = domain || "Programming";
+      confidence = 0.25;
+      notes.push(
+        "We couldn't map this goal to a known area yet, so we started you on programming foundations — edit the target skills to steer it.",
+      );
+    } else {
+      methods.push("unmapped");
+      confidence = 0.1;
+      notes.push(
+        "This goal is outside the offline learning catalog — connect an AI provider and I can map it properly.",
+      );
+    }
   }
 
   const seedIds = Array.from(targets.keys());

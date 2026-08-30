@@ -1,6 +1,7 @@
 import { resolveGoalText } from "@/lib/ai/aiService";
 import { validateSkillNames } from "@/lib/domain/goalResolver";
 import { goalResolveSchema } from "@/lib/validation/schemas";
+import { aiSessionId } from "@/lib/server/session";
 import { ok, parseBody, route } from "@/lib/server/http";
 import { SKILL_BY_ID } from "@/lib/catalog";
 
@@ -8,17 +9,20 @@ export const runtime = "nodejs";
 
 /**
  * Resolve ANY natural-language goal to target skills for the confirmation screen.
- * Deterministic by default; upgraded by one small structured LLM call when a
- * provider is configured. Returns skill ids + names so the UI can show and edit
- * exactly what was inferred.
+ * Deterministic by default; upgraded by one small structured LLM call when this
+ * session has a provider configured. Returns skill ids + names so the UI can
+ * show and edit exactly what was inferred.
  */
 export const POST = route(async (req) => {
   const { text, targetRole } = await parseBody(req, goalResolveSchema);
-  const { resolution, source, provider, dynamicSkills } = await resolveGoalText(text, targetRole);
+  const { resolution, source, provider, note, dynamicSkills } = await resolveGoalText(text, targetRole, {
+    sessionId: aiSessionId(),
+  });
   return ok({
     resolution,
     source,
     provider,
+    note,
     dynamicSkills,
     targets: resolution.targets.map((t) => ({
       skillId: t.skillId,

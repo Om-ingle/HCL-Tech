@@ -62,6 +62,8 @@ export interface GoalResolveResponse {
   resolution: GoalResolution;
   source: "llm" | "fallback";
   provider?: string;
+  /** Set when a configured provider was tried but the call failed. */
+  note?: string;
   /** AI-inferred skills outside the catalog — persisted with the profile. */
   dynamicSkills: { id?: string; name: string; domain?: string; description?: string; tier?: number }[];
   targets: TargetSkill[];
@@ -92,6 +94,7 @@ export const api = {
       draft: ProfileDraft;
       source: "llm" | "fallback";
       provider?: string;
+      note?: string;
       aiStatus: PublicAiStatus;
       resolution: GoalResolution;
       dynamicSkills: { id?: string; name: string; domain?: string; description?: string; tier?: number }[];

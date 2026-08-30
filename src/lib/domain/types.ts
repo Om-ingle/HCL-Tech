@@ -135,7 +135,8 @@ export type GoalMethod =
   | "terms" // inferred from skill names/aliases in the text
   | "domain" // inferred from a domain keyword
   | "llm" // LLM proposed skills (always validated against the graph)
-  | "starter"; // nothing recognized — foundational starter route
+  | "starter" // vague but clearly tech-flavoured — foundational starter route
+  | "unmapped"; // no tech signal at all — outside the offline catalog's scope
 
 export interface GoalResolution {
   goalText: string;
