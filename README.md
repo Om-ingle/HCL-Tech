@@ -22,7 +22,7 @@ The order is the point. You can't learn Docker before you know the command line,
 
 ## What you can do
 
-**Say anything.** "Final-year student, know some C, want to get into data science." "Linux kernel developer." There's no dropdown of predefined careers — though well-known ones are recognized instantly.
+**Say anything.** "Final-year student, know some C, want to get into data science." "Linux kernel developer." There's no dropdown of predefined careers  though well-known ones are recognized instantly.
 
 **See your gaps honestly.** Every skill sorted into *mastered / partial / missing*, in learning order, with a reason for each.
 
@@ -75,7 +75,7 @@ BYOK - bring your own key, pick a provider and model in the app's AI settings, a
 
 Next.js 14 · TypeScript · React 18 · Tailwind CSS · Prisma · Supabase PostgreSQL · Zod · Zustand · Framer Motion
 
-Plain `fetch` for all AI calls — no vendor SDKs.
+Plain `fetch` for all AI calls  no vendor SDKs.
 
 ## Run it locally
 
