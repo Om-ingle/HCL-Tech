@@ -47,7 +47,7 @@ function detectTimelineWeeks(t: string): number | undefined {
 
 function detectName(raw: string): string | undefined {
   const m =
-    raw.match(/(?:\b[Ii]'?m|\b[Ii] am|[Mm]y name is|\b[Nn]ame'?s|[Tt]his is|[Cc]all me)\s+([A-Z][a-zA-Z]{1,20})\b/) ||
+    raw.match(/(?:\b[Ii]'?m|\b[Ii] am|[Mm]y name is|[Mm]era naam|\b[Nn]ame'?s|[Tt]his is|[Cc]all me)\s+([A-Z][a-zA-Z]{1,20})\b/) ||
     raw.match(/^\s*([A-Z][a-zA-Z]{1,20})\s+here\b/);
   if (m) {
     const name = m[1];

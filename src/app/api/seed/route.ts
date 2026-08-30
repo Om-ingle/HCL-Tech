@@ -25,6 +25,10 @@ function personaInput(p: (typeof PERSONAS)[number]): ProfileInput {
 
 // Seed (or reset) the three demo personas, each with a fresh roadmap v1.
 export const POST = route(async () => {
+  // Earlier personas were renamed — clear their rows so they don't linger.
+  const legacyIds = ["persona-maya", "persona-dev", "persona-sam"];
+  await prisma.learnerProfile.deleteMany({ where: { id: { in: legacyIds } } }).catch(() => undefined);
+
   const ids = PERSONAS.map((p) => p.id);
   await prisma.event.deleteMany({ where: { profileId: { in: ids } } });
   await prisma.stepState.deleteMany({ where: { profileId: { in: ids } } });

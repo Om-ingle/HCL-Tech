@@ -91,8 +91,9 @@ export default function HomePage() {
               Chart your route to any goal.
             </h1>
             <p className="mt-3 text-muted">
-              Name the destination in your own words — Linux kernel developer, robotics engineer, quant
-              developer, anything. I'll map the skills between you and it, and reroute as you learn.
+              Explain it the way you would to a friend — “third year, want to get into data”, “I know some
+              C and want to work on the kernel”, Hinglish is fine too. I'll map the skills between here and
+              there, and reroute as you learn.
             </p>
           </div>
 
@@ -101,11 +102,11 @@ export default function HomePage() {
               value={text}
               onChange={(e) => setText(e.target.value)}
               rows={4}
-              placeholder="e.g. I know some C and Linux and I want to become a Linux kernel developer. About 8 hours a week."
+              placeholder="e.g. i'm in 3rd year, know a bit of python, want to get into data engineering. maybe 6 hrs a week"
               className="w-full resize-none rounded-xl border border-line bg-surface p-3 text-sm outline-none focus:border-route"
             />
             <div className="mt-3 flex items-center justify-between">
-              <p className="text-xs text-faint">Any goal — no fixed list of roles.</p>
+              <p className="text-xs text-faint">Type it however it comes out — there's no fixed list of roles.</p>
               <Button onClick={onboard} loading={loading} disabled={!text.trim()}>
                 <Wand2 className="h-4 w-4" /> Map my route
               </Button>
@@ -114,7 +115,7 @@ export default function HomePage() {
           </Card>
 
           <div className="mt-8">
-            <p className="mb-3 text-center text-sm font-medium text-muted">…or start from a demo traveler</p>
+            <p className="mb-3 text-center text-sm font-medium text-muted">…or look in on a real learner</p>
             <div className="grid gap-3 sm:grid-cols-3">
               {personas.map((p) => (
                 <Card key={p.id} className="flex flex-col p-4">
@@ -127,7 +128,7 @@ export default function HomePage() {
                     loading={seeding === p.id}
                     onClick={() => loadPersona(p)}
                   >
-                    Follow this route <ArrowRight className="h-4 w-4" />
+                    View {p.name}'s route <ArrowRight className="h-4 w-4" />
                   </Button>
                 </Card>
               ))}

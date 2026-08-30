@@ -27,7 +27,7 @@ export default function DashboardPage() {
   return (
     <div className="mt-2 space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">{data.profileName}'s journey</h1>
+        <h1 className="text-xl font-semibold">{data.profileName}'s progress</h1>
         <Badge tone="route">{data.roleName}</Badge>
       </div>
 

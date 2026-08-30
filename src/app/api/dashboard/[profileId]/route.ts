@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 type Ctx = { params: { profileId: string } };
 
 const EVENT_LABELS: Record<string, string> = {
-  profile_created: "Started the journey",
+  profile_created: "Profile created",
   profile_updated: "Updated profile",
   path_regenerated: "Recalculated route",
   step_completed: "Completed a step",
