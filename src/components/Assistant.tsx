@@ -60,7 +60,7 @@ export function Assistant() {
   if (!assistantOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-ink/30" onClick={() => setAssistantOpen(false)}>
+    <div className="fixed inset-0 z-40 flex justify-end bg-black/40" onClick={() => setAssistantOpen(false)}>
       <div
         onClick={(e) => e.stopPropagation()}
         className="flex h-full w-full max-w-md flex-col border-l border-line bg-raised shadow-lift"

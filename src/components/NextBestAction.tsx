@@ -39,12 +39,12 @@ export function NextBestAction({
   return (
     <Card className="relative overflow-hidden border-marker/40 bg-marker-soft/40 p-5">
       <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-marker/10" />
-      <div className="flex items-center gap-2 text-marker">
-        <span className="grid h-7 w-7 place-items-center rounded-full bg-marker text-white">
+      <div className="flex flex-wrap items-center gap-2 text-marker">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-marker text-white">
           <Navigation className="h-4 w-4" />
         </span>
         <p className="text-xs font-semibold uppercase tracking-wide">Next best action</p>
-        <span className="ml-auto text-xs text-muted">in {next.phaseTitle}</span>
+        <span className="ml-auto pl-1 text-xs text-muted">in {next.phaseTitle}</span>
       </div>
 
       <div className="mt-3 flex items-start gap-3">

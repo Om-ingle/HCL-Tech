@@ -21,6 +21,36 @@
   --bad: #bf4630;
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+  color-scheme: light;
+}
+
+/* Dark theme — the same map at night: warm charcoal paper (never pure black),
+   ink turned cream, and the route/marker accents lifted so contrast holds.
+   Every component reads the same tokens, so nothing needs per-theme CSS. */
+.dark {
+  --paper: #17140f;
+  --surface: #1e1a14;
+  --raised: #252019;
+  --ink: #ece6d9;
+  --muted: #a59d8d;
+  --faint: #736c5e;
+  --line: #3a352a;
+  --route: #46b494;
+  --route-soft: #1e3b32;
+  --marker: #d98a5b;
+  --marker-soft: #3b2b1f;
+  --good: #5fb98a;
+  --warn: #d4a24c;
+  --bad: #e07862;
+  color-scheme: dark;
+}
+
+/* Shadows read differently on dark paper — deepen instead of lighten. */
+.dark .shadow-card {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+}
+.dark .shadow-lift {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.35), 0 18px 40px -16px rgba(0, 0, 0, 0.7);
 }
 
 * {

@@ -3,13 +3,13 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Flame, Trophy, ClipboardCheck, CheckCircle2, MapPin, Award, Activity } from "lucide-react";
-import { api, type DashboardData } from "@/lib/client/api";
+import { api, isProfileMissing, type DashboardData } from "@/lib/client/api";
 import { useAppStore } from "@/store/useAppStore";
 import { Card, ProgressRing, Spinner, Badge } from "@/components/ui";
 
 export default function DashboardPage() {
   const router = useRouter();
-  const profileId = useAppStore((s) => s.profileId);
+  const { profileId, setProfileId, fireReroute } = useAppStore();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -18,8 +18,20 @@ export default function DashboardPage() {
       router.replace("/");
       return;
     }
-    api.dashboard(profileId).then(setData).catch(() => {}).finally(() => setLoading(false));
-  }, [profileId, router]);
+    api
+      .dashboard(profileId)
+      .then(setData)
+      .catch((e) => {
+        // A saved learner id the server no longer knows → back to onboarding.
+        if (isProfileMissing(e)) {
+          setProfileId(null);
+          fireReroute(["Your saved learner is no longer on this server — let's chart a new route."]);
+          router.replace("/");
+          return;
+        }
+      })
+      .finally(() => setLoading(false));
+  }, [profileId, router, setProfileId, fireReroute]);
 
   if (loading) return <div className="mt-10"><Spinner label="Loading your progress…" /></div>;
   if (!data) return null;

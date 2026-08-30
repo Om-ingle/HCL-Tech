@@ -72,9 +72,6 @@ export default function HomePage() {
       setResolution(r.resolution);
       setTargets(r.targets);
       setDynamicSkills(r.dynamicSkills ?? []);
-      setResolution(r.resolution);
-      setTargets(r.targets);
-      setDynamicSkills(r.dynamicSkills ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to read that.");
     } finally {
@@ -122,8 +119,10 @@ export default function HomePage() {
               placeholder="e.g. i'm in 3rd year, know a bit of python, want to get into data engineering. maybe 6 hrs a week"
               className="w-full resize-none rounded-xl border border-line bg-surface p-3 text-sm outline-none focus:border-route"
             />
-            <div className="mt-3 flex items-center justify-between">
-              <p className="text-xs text-faint">Type it however it comes out — there's no fixed list of roles.</p>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="min-w-0 flex-1 basis-40 text-xs text-faint">
+                Type it however it comes out — there's no fixed list of roles.
+              </p>
               <Button onClick={onboard} loading={loading} disabled={!text.trim()}>
                 <Wand2 className="h-4 w-4" /> Map my route
               </Button>
@@ -455,12 +454,12 @@ function ConfirmDraft({
 
       {error && <p className="mt-3 text-sm text-bad">{error}</p>}
 
-      <div className="mt-5 flex items-center justify-between">
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
         <Button variant="ghost" onClick={onBack}>
           Back
         </Button>
-        <Button onClick={confirm} loading={saving}>
-          Start my route to {destination} <ArrowRight className="h-4 w-4" />
+        <Button onClick={confirm} loading={saving} className="min-w-0 max-w-full">
+          <span className="truncate">Start my route to {destination}</span> <ArrowRight className="h-4 w-4 shrink-0" />
         </Button>
       </div>
     </Card>

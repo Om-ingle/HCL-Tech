@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw, Route, Map as MapIcon, Flag } from "lucide-react";
-import { api, type NavigatorBundle, type AdaptResponse } from "@/lib/client/api";
+import { api, isProfileMissing, type NavigatorBundle, type AdaptResponse } from "@/lib/client/api";
 import { useAppStore } from "@/store/useAppStore";
 import { Button, Card, Spinner } from "@/components/ui";
 import { NextBestAction } from "@/components/NextBestAction";
@@ -13,7 +13,7 @@ import { HowWeBuilt } from "@/components/HowWeBuilt";
 
 export default function NavigatorPage() {
   const router = useRouter();
-  const { profileId, fireReroute } = useAppStore();
+  const { profileId, fireReroute, setProfileId } = useAppStore();
   const [bundle, setBundle] = useState<NavigatorBundle | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -26,11 +26,19 @@ export default function NavigatorPage() {
       const b = await api.getNavigator(id);
       setBundle(b);
     } catch (e) {
+      // A saved learner id the server no longer knows (reset database) is not
+      // an error to stare at — drop it and go chart a fresh route.
+      if (isProfileMissing(e)) {
+        setProfileId(null);
+        fireReroute(["Your saved learner is no longer on this server — let's chart a new route."]);
+        router.replace("/");
+        return;
+      }
       setError(e instanceof Error ? e.message : "Couldn't load your route.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fireReroute, router, setProfileId]);
 
   useEffect(() => {
     if (!profileId) {
@@ -140,9 +148,11 @@ export default function NavigatorPage() {
         <p className="mt-3 rounded-xl bg-surface p-3 text-sm text-muted">{roadmap.rationale.summary}</p>
       </Card>
 
-      {/* Body */}
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_320px]">
-        <div className="order-2 lg:order-1">
+      {/* grid-cols-1 is load-bearing: `grid` alone would auto-place both
+          children in implicit side-by-side columns (the desktop two-column
+          layout squashed onto phones). One column below lg, two at lg. */}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
+        <div>
           <RouteMap
             phases={view.phases}
             currentPhaseIndex={view.progress.currentPhaseIndex}
@@ -152,7 +162,7 @@ export default function NavigatorPage() {
           />
         </div>
 
-        <div className="order-1 space-y-4 lg:order-2">
+        <div className="space-y-4">
           <NextBestAction
             next={view.nextAction}
             onOpen={(id) => router.push(`/step/${id}`)}

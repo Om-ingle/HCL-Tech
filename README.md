@@ -38,14 +38,12 @@ The app has a **provider-agnostic LLM abstraction** — domain logic never talks
 
 | Provider | Default model | Get a key |
 |---|---|---|
-| **Google Gemini** | `gemini-2.0-flash` | https://aistudio.google.com/app/apikey |
-| **OpenRouter** (gateway — any model) | `google/gemini-2.0-flash-exp:free` | https://openrouter.ai/keys |
-| **Anthropic Claude** | `claude-3-5-haiku-latest` | https://console.anthropic.com/settings/keys |
-| **xAI Grok** | `grok-2-latest` | https://console.x.ai |
+| **Google Gemini** | `gemini-3.7-flash` (free tier) | https://aistudio.google.com/app/apikey |
+| **OpenRouter** (gateway — any model) | `google/gemini-3.5-flash-lite:free` | https://openrouter.ai/keys |
+| **Anthropic Claude** | `claude-haiku-4-5-20251001` | https://console.anthropic.com/settings/keys |
+| **xAI Grok** | `grok-4-fast` | https://console.x.ai |
 
-Configure it two ways:
-- **In-app** → the **AI Brain** button (top-right) → pick provider, model, key → *Test connection* → *Save*.
-- **Env** → set `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL` in `.env`.
+Configure it in-app: the **AI Brain** button (top-right) → pick provider, model, key → *Test connection* → *Save*. The key is stored **per browser session** (server-side, HttpOnly cookie) — there is no global or env-var fallback key. A saved model that the provider has since retired is automatically retried on the provider's current default.
 
 **Modes** (`AI_MODE`): `hybrid` (default — deterministic core + LLM for language tasks) · `ai` (LLM for everything it supports; path ordering stays deterministic) · `demo` (fully offline fallback).
 

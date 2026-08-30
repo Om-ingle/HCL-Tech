@@ -84,6 +84,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return json.data as T;
 }
 
+/** The saved learner id no longer exists server-side (reset/wiped database) —
+ *  callers should drop it and go back to onboarding, not show an error. */
+export function isProfileMissing(e: unknown): boolean {
+  return e instanceof Error && /profile not found/i.test(e.message);
+}
+
 const post = <T>(path: string, body: unknown) =>
   req<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
 

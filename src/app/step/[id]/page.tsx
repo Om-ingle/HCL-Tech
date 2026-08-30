@@ -16,7 +16,7 @@ import {
   Navigation,
   Compass,
 } from "lucide-react";
-import { api, type NavigatorBundle } from "@/lib/client/api";
+import { api, isProfileMissing, type NavigatorBundle } from "@/lib/client/api";
 import type { HydratedStep } from "@/lib/domain/nextAction";
 import type { PublicQuestion } from "@/lib/server/assessment";
 import { skillName } from "@/lib/catalog";
@@ -39,7 +39,7 @@ export default function StepPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const stepId = decodeURIComponent(String(params.id));
-  const { profileId, fireReroute } = useAppStore();
+  const { profileId, fireReroute, setProfileId } = useAppStore();
 
   const [bundle, setBundle] = useState<NavigatorBundle | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,11 +58,16 @@ export default function StepPage() {
     try {
       setBundle(await api.getNavigator(id));
     } catch (e) {
+      if (isProfileMissing(e)) {
+        setProfileId(null);
+        router.replace("/");
+        return;
+      }
       setError(e instanceof Error ? e.message : "Couldn't load this step.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [router, setProfileId]);
 
   useEffect(() => {
     if (!profileId) {

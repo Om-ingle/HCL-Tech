@@ -51,7 +51,31 @@ export function route<A extends unknown[]>(
       }
       const msg = e instanceof Error ? e.message : "Unexpected error.";
       console.error("[api] unhandled:", msg);
+      // A database that can't be reached is an infrastructure problem, not a
+      // retryable app bug — say so explicitly instead of a generic 500, so a
+      // misconfigured deployment diagnoses itself in the response and logs.
+      if (isDbUnavailable(e)) {
+        return fail(
+          "The learning database is not reachable from this server. " +
+            "If this is the deployed site, DATABASE_URL (and DIRECT_URL for migrations) " +
+            "must be set in the hosting environment.",
+          503,
+        );
+      }
       return fail("Something went wrong. Please try again.", 500);
     }
   };
+}
+
+/** Prisma fails these ways when the DB env is missing/wrong or unreachable. */
+function isDbUnavailable(e: unknown): boolean {
+  const err = e as { name?: string; message?: string; code?: string } | null;
+  if (!err) return false;
+  if (err.name === "PrismaClientInitializationError") return true;
+  const m = err.message ?? "";
+  return (
+    /Environment variable not found/i.test(m) ||
+    /Can't reach database server|Error querying the database/i.test(m) ||
+    typeof err.code === "string" && /^P10(01|02|04|08)$/.test(err.code)
+  );
 }

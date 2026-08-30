@@ -202,6 +202,76 @@ console.log("\n5. Retired model — vendor 404 'not found' retried once with the
   global.fetch = recordingFetch;
 }
 
+// ── 6. Centralized model catalog — current ids, honest cost labels ────────────
+console.log("\n6. Model catalog — every provider current, labeled, no retired ids");
+{
+  const RETIRED = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "grok-2-latest", "grok-beta", "claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"];
+  for (const [id, meta] of Object.entries(PROVIDER_META)) {
+    check(`${id}: ≥2 model options`, meta.models.length >= 2, `${meta.models.length} options`);
+    check(`${id}: every option has a valid cost label`,
+      meta.models.every((m) => ["free", "free-tier", "paid"].includes(m.cost) && m.label),
+      meta.models.map((m) => `${m.label}(${m.cost})`).join(", ").slice(0, 90));
+    check(`${id}: no retired ids in the list`,
+      !meta.models.some((m) => RETIRED.includes(m.id)),
+      meta.models.filter((m) => RETIRED.includes(m.id)).join(", ") || "clean");
+    check(`${id}: default is one of the listed models`,
+      meta.models.some((m) => m.id === meta.defaultModel),
+      meta.defaultModel);
+  }
+  // Cost honesty: only OpenRouter offers genuinely free slugs; Gemini has a
+  // free tier; Claude and Grok are paid-only APIs.
+  check("gemini: free-tier labels", PROVIDER_META.gemini.models.every((m) => m.cost === "free-tier"));
+  check("claude: all paid", PROVIDER_META.claude.models.every((m) => m.cost === "paid"));
+  check("grok: all paid", PROVIDER_META.grok.models.every((m) => m.cost === "paid"));
+  check("openrouter: free label only on :free slugs",
+    PROVIDER_META.openrouter.models.every((m) => (m.cost === "free" ? m.id.endsWith(":free") : true)));
+}
+
+// ── 7. API flow — the exact routes /navigator /gap /dashboard call ────────────
+console.log("\n7. API flow (real DB) — seed demo learner, then load every page's route");
+{
+  const { PrismaClient } = require("@prisma/client");
+  const db = new PrismaClient();
+  globalThis.prisma = db; // "@/lib/db" singleton reuses this connection
+
+  const seedRoute = jiti("../src/app/api/seed/route.ts");
+  const pathRoute = jiti("../src/app/api/path/[profileId]/route.ts");
+  const gapRoute = jiti("../src/app/api/skill-gap/[profileId]/route.ts");
+  const dashRoute = jiti("../src/app/api/dashboard/[profileId]/route.ts");
+
+  const body = async (res) => ({ status: res.status, json: await res.json() });
+
+  // "Try a demo" — seeds personas + roadmaps into the DB.
+  const seedRes = await body(await seedRoute.POST());
+  const personaId = seedRes.json?.data?.personas?.[0]?.id;
+  check("POST /api/seed creates demo learners", seedRes.status === 200 && !!personaId,
+    seedRes.json?.error ?? `${seedRes.json?.data?.personas?.length ?? 0} personas`);
+
+  if (personaId) {
+    const nav = await body(await pathRoute.GET(null, { params: { profileId: personaId } }));
+    check("GET /api/path/:id (Navigator)", nav.status === 200 && !!nav.json?.data?.view?.phases?.length,
+      nav.json?.error ?? `${nav.json?.data?.view?.phases?.length} phases`);
+
+    const gap = await body(await gapRoute.GET(null, { params: { profileId: personaId } }));
+    check("GET /api/skill-gap/:id (Skill Gap)", gap.status === 200 && !!gap.json?.data?.gap,
+      gap.json?.error ?? `${gap.json?.data?.gap?.missing?.length} to learn`);
+
+    const dash = await body(await dashRoute.GET(null, { params: { profileId: personaId } }));
+    check("GET /api/dashboard/:id (Dashboard)", dash.status === 200 && !!dash.json?.data?.progress,
+      dash.json?.error ?? `${dash.json?.data?.progress?.overallPct}%`);
+  }
+
+  // Stale profile id (reset DB / different environment) → clean 404, not a 500.
+  const gone = await body(await pathRoute.GET(null, { params: { profileId: "no-such-learner" } }));
+  check("unknown learner → 404 Profile not found (not a 500)",
+    gone.status === 404 && /profile not found/i.test(gone.json?.error ?? ""), gone.json?.error ?? "");
+
+  // A brand-new Next.js cold start must find DATABASE_URL exactly like prod.
+  check("DB reachable with .env credentials", await db.learnerProfile.count() >= 0, "connected");
+
+  await db.$disconnect();
+}
+
 console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : failures + " CHECK(S) FAILED"}\n`);
 process.exit(failures === 0 ? 0 : 1);
 })();

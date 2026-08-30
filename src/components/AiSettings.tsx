@@ -19,15 +19,30 @@ export function AiSettings() {
   const [enabled, setEnabled] = useState(true);
   const [test, setTest] = useState<{ ok: boolean; message: string; latencyMs?: number } | null>(null);
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
+  // Set when the saved model id isn't in the provider's current list (retired
+  // slug or hand-typed custom) — we then offer the current default instead.
+  const [staleModel, setStaleModel] = useState<string | null>(null);
 
   useEffect(() => {
     if (!settingsOpen) return;
     setTest(null);
     setApiKey("");
+    setStaleModel(null);
     api.getAiConfig().then((r) => {
       setMeta(r);
       setProvider(r.status.provider);
-      setModel(r.status.model);
+      const info = r.providers[r.status.provider];
+      const saved = r.status.model;
+      if (saved && info?.models.some((m) => m.id === saved)) {
+        setModel(saved);
+      } else if (saved) {
+        // Not in the current list → probably retired. Show the provider's
+        // current default (the runtime also auto-falls-back on a vendor 404).
+        setModel(info?.defaultModel ?? "");
+        setStaleModel(saved);
+      } else {
+        setModel(info?.defaultModel ?? "");
+      }
       setMode(r.status.mode);
       // Saving from this panel always enables the provider — "demo" mode is the
       // documented off-switch. Deriving this from status.source would persist
@@ -70,10 +85,10 @@ export function AiSettings() {
   }
 
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-ink/40 p-4" onClick={() => setSettingsOpen(false)}>
+    <div className="fixed inset-0 z-40 grid place-items-center bg-black/40 p-3 sm:p-4" onClick={() => setSettingsOpen(false)}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-raised p-6 shadow-lift"
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-raised p-4 shadow-lift sm:p-6"
       >
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2">
@@ -111,6 +126,7 @@ export function AiSettings() {
               onClick={() => {
                 setProvider(id);
                 setModel(meta.providers[id].defaultModel);
+                setStaleModel(null);
                 setTest(null);
               }}
               className={cx(
@@ -141,6 +157,12 @@ export function AiSettings() {
           <option value="__custom">Custom model…</option>
         </select>
         {info?.note && <p className="mt-1 text-xs text-muted">{info.note}</p>}
+        {staleModel && (
+          <p className="mt-1 text-xs text-warn">
+            Saved model “{staleModel}” isn’t in the current list — switched to the default. If it was a custom id you
+            meant to keep, re-enter it below.
+          </p>
+        )}
         {!modelOptions.some((m) => m.id === model) && (
           <input
             value={model}

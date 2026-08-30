@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Target, ExternalLink, ChevronRight, TrendingUp, Compass } from "lucide-react";
-import { api } from "@/lib/client/api";
+import { api, isProfileMissing } from "@/lib/client/api";
 import { skillName } from "@/lib/catalog";
 import { useAppStore } from "@/store/useAppStore";
 import { Badge, Card, Spinner, cx } from "@/components/ui";
@@ -14,7 +14,7 @@ type Discovery = NonNullable<Awaited<ReturnType<typeof api.skillGap>>["discovery
 
 export default function GapPage() {
   const router = useRouter();
-  const profileId = useAppStore((s) => s.profileId);
+  const { profileId, setProfileId, fireReroute } = useAppStore();
   const [gap, setGap] = useState<SkillGap | null>(null);
   const [recs, setRecs] = useState<Recommendation[]>([]);
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
@@ -22,12 +22,22 @@ export default function GapPage() {
 
   const load = useCallback(async (id: string) => {
     setLoading(true);
-    const r = await api.skillGap(id);
-    setGap(r.gap);
-    setRecs(r.recommendations);
-    setDiscovery(r.discovery ?? null);
-    setLoading(false);
-  }, []);
+    try {
+      const r = await api.skillGap(id);
+      setGap(r.gap);
+      setRecs(r.recommendations);
+      setDiscovery(r.discovery ?? null);
+    } catch (e) {
+      if (isProfileMissing(e)) {
+        setProfileId(null);
+        fireReroute(["Your saved learner is no longer on this server — let's chart a new route."]);
+        router.replace("/");
+        return;
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [fireReroute, router, setProfileId]);
 
   useEffect(() => {
     if (!profileId) {
@@ -43,9 +53,9 @@ export default function GapPage() {
   return (
     <div className="mt-2 space-y-4">
       <Card className="p-5">
-        <div className="flex items-center gap-2">
-          <Target className="h-5 w-5 text-route" />
-          <h1 className="text-xl font-semibold">Skill gap for {gap.roleName}</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <Target className="h-5 w-5 shrink-0 text-route" />
+          <h1 className="min-w-0 text-xl font-semibold">Skill gap for {gap.roleName}</h1>
         </div>
         <p className="mt-1 text-sm text-muted">
           Comparing what you know against what {gap.roleName} needs — ordered so prerequisites always come first.
