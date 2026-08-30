@@ -29,7 +29,10 @@ export function AiSettings() {
       setProvider(r.status.provider);
       setModel(r.status.model);
       setMode(r.status.mode);
-      setEnabled(r.status.source !== "none");
+      // Saving from this panel always enables the provider — "demo" mode is the
+      // documented off-switch. Deriving this from status.source would persist
+      // enabled=false on first-time setup and silently disable every AI call.
+      setEnabled(true);
     });
   }, [settingsOpen]);
 

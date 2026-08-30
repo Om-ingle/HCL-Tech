@@ -93,6 +93,9 @@ export async function saveAiConfig(input: AiConfigInput): Promise<void> {
   const existing = await prisma.aiConfig.findUnique({ where: { id: "singleton" } }).catch(() => null);
   const apiKey =
     input.apiKey !== undefined && input.apiKey !== "" ? input.apiKey : existing?.apiKey ?? "";
+  // A key being saved means the provider is meant to be live. Older UIs could
+  // persist enabled=false alongside a key, silently disabling every AI call.
+  const enabled = apiKey ? true : (input.enabled ?? true);
   await prisma.aiConfig.upsert({
     where: { id: "singleton" },
     create: {
@@ -101,14 +104,14 @@ export async function saveAiConfig(input: AiConfigInput): Promise<void> {
       model: input.model ?? "",
       apiKey,
       mode: input.mode ?? "hybrid",
-      enabled: input.enabled ?? true,
+      enabled,
     },
     update: {
       provider: input.provider,
       model: input.model ?? "",
       apiKey,
       mode: input.mode ?? "hybrid",
-      enabled: input.enabled ?? true,
+      enabled,
     },
   });
 }

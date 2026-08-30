@@ -84,15 +84,16 @@ export const PROVIDER_META: Record<
   openrouter: {
     label: "OpenRouter",
     models: [
-      "google/gemini-2.0-flash-exp:free",
-      "anthropic/claude-3.5-haiku",
+      "google/gemini-3.5-flash-lite",
+      "google/gemini-3.7-flash",
+      "minimax/minimax-m3:free",
+      "z-ai/glm-5.2:free",
       "openai/gpt-4o-mini",
-      "meta-llama/llama-3.3-70b-instruct",
     ],
-    defaultModel: "google/gemini-2.0-flash-exp:free",
+    defaultModel: "google/gemini-3.5-flash-lite",
     keyHint: "sk-or-…",
     keyUrl: "https://openrouter.ai/keys",
-    note: "Gateway — pick almost any model by its slug.",
+    note: "Gateway — pick almost any model by its slug. Free slugs rotate; check openrouter.ai/models if one 404s.",
   },
   claude: {
     label: "Anthropic Claude",

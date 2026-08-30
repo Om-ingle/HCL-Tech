@@ -1,5 +1,7 @@
-import type { Difficulty, LearningStyle, ProfileDraft } from "@/lib/domain/types";
-import { detectSkills, matchRole } from "@/lib/catalog";
+import type { Difficulty, DynamicSkillDef, GoalResolution, LearningStyle, ProfileDraft } from "@/lib/domain/types";
+import { detectSkills, getRole, matchRole } from "@/lib/catalog";
+import { dynamicSkillDefsFor, dynamicSkillId, ensureDynamicSkills } from "@/lib/catalog/dynamic";
+import { resolveGoal, buildGoalInput, validateSkillNames, type GoalHint } from "@/lib/domain/goalResolver";
 import type { AiConfigInput } from "@/lib/validation/schemas";
 import {
   configForTest,
@@ -9,7 +11,13 @@ import {
   type PublicAiStatus,
 } from "./config";
 import { getProvider } from "./registry";
-import { buildAssistantRequest, buildExtractionRequest, type AssistantContext } from "./prompts";
+import {
+  buildAssistantRequest,
+  buildExtractionRequest,
+  buildGoalRequest,
+  type AssistantContext,
+  type AssistantHistoryMessage,
+} from "./prompts";
 import { assistantFallback, extractProfileFallback } from "./fallback";
 import type { TestResult } from "./types";
 
@@ -25,6 +33,8 @@ export interface AssistantOutcome {
   text: string;
   source: AiSource;
   provider?: string;
+  /** Set when a configured provider was tried but failed (key-safe reason). */
+  note?: string;
 }
 
 /** Public, key-free status for the UI ("AI Brain: <provider> ✓"). */
@@ -120,18 +130,114 @@ export async function extractProfile(text: string): Promise<ExtractionOutcome> {
   return { draft: baseline, source: "fallback" };
 }
 
+// ── Goal resolution (open-goal engine) ────────────────────────────────────────
+export interface GoalOutcome {
+  resolution: GoalResolution;
+  source: AiSource;
+  provider?: string;
+  /** LLM-inferred skills registered outside the curated catalog, so the client
+   *  can persist them with the profile. Empty when nothing new was created. */
+  dynamicSkills: DynamicSkillDef[];
+}
+
+/** Accept candidateSkills as plain strings OR {name, blurb} objects — models vary. */
+function parseCandidates(v: unknown): { name: string; blurb?: string }[] {
+  if (!Array.isArray(v)) return [];
+  const out: { name: string; blurb?: string }[] = [];
+  for (const x of v) {
+    if (typeof x === "string") out.push({ name: x });
+    else if (x && typeof x === "object") {
+      const o = x as Record<string, unknown>;
+      if (typeof o.name === "string" && o.name.trim()) {
+        out.push({ name: o.name, blurb: typeof o.blurb === "string" ? o.blurb : undefined });
+      }
+    }
+  }
+  return out.slice(0, 16);
+}
+
+/**
+ * Resolve ANY natural-language goal to target skills. The deterministic resolver
+ * runs first and always produces a usable result; when a provider is configured
+ * we add ONE small structured call as a hint. Candidate skills that exist in the
+ * graph are validated normally; topics OUTSIDE the catalog (battery chemistry,
+ * electrochemistry, …) are registered as dynamic skills so the goal genuinely
+ * drives the route — resources come from the discovery layers (including
+ * generated study modules, never invented URLs). Called once at onboarding —
+ * never on every roadmap regeneration.
+ */
+export async function resolveGoalText(
+  text: string,
+  targetRole?: string,
+  opts: { roleIsGuess?: boolean } = {},
+): Promise<GoalOutcome> {
+  const input = buildGoalInput(text, targetRole, opts.roleIsGuess);
+  const baseline = resolveGoal(input);
+  const cfg = await resolveAiConfig();
+  if (!cfg.available || cfg.mode === "demo") return { resolution: baseline, source: "fallback", dynamicSkills: [] };
+
+  const provider = getProvider(cfg.provider);
+  if (!provider) return { resolution: baseline, source: "fallback", dynamicSkills: [] };
+
+  try {
+    const raw = await provider.generateStructured(buildGoalRequest(text), cfg);
+    if (raw && typeof raw === "object") {
+      const obj = raw as Record<string, unknown>;
+      const domain = typeof obj.domain === "string" ? obj.domain.trim().slice(0, 40) : undefined;
+      const candidates = parseCandidates(obj.candidateSkills);
+      // Map onto the catalog; register the genuinely-new topics as dynamic skills.
+      const { ids, unknown } = validateSkillNames(candidates.map((c) => c.name));
+      const newTopics = unknown
+        .map((name) => {
+          const blurb = candidates.find((c) => c.name === name)?.blurb;
+          return { id: dynamicSkillId(name), name, domain: domain ?? "Custom", description: blurb };
+        })
+        .slice(0, 8);
+      const registered = ensureDynamicSkills(newTopics);
+      const hint: GoalHint = {
+        label: typeof obj.goal === "string" ? obj.goal.trim().slice(0, 80) : undefined,
+        domain,
+        skills: [...ids, ...registered.map((s) => s.id)],
+      };
+      const resolution = resolveGoal(input, hint);
+      return {
+        resolution,
+        source: "llm",
+        provider: provider.label,
+        dynamicSkills: dynamicSkillDefsFor(resolution.targets.map((t) => t.skillId)),
+      };
+    }
+  } catch (err) {
+    console.warn(`[ai] goal resolution fell back to deterministic (${provider.id}):`, safeErr(err));
+  }
+  return { resolution: baseline, source: "fallback", dynamicSkills: [] };
+}
+
 // ── Assistant Q&A ─────────────────────────────────────────────────────────────
-export async function answerQuestion(question: string, ctx: AssistantContext): Promise<AssistantOutcome> {
+export async function answerQuestion(
+  question: string,
+  ctx: AssistantContext,
+  history: AssistantHistoryMessage[] = [],
+): Promise<AssistantOutcome> {
   const cfg = await resolveAiConfig();
   if (cfg.available && cfg.mode !== "demo") {
     const provider = getProvider(cfg.provider);
     if (provider) {
       try {
-        const r = await provider.generate(buildAssistantRequest(question, ctx), cfg);
+        const r = await provider.generate(buildAssistantRequest(question, ctx, history), cfg);
         const text = r.text?.trim();
         if (text) return { text, source: "llm", provider: provider.label };
+        throw new Error("Empty response from provider");
       } catch (err) {
-        console.warn(`[ai] assistant fell back to deterministic (${provider.id}):`, safeErr(err));
+        // Keep answering deterministically, but surface WHY in the UI badge so a
+        // misconfigured key never masquerades as "the AI said this".
+        const reason = safeErr(err);
+        console.warn(`[ai] assistant fell back to deterministic (${provider.id}):`, reason);
+        return {
+          text: assistantFallback(question, ctx),
+          source: "fallback",
+          note: `${provider.label} call failed — used the built-in answer. (${reason})`,
+        };
       }
     }
   }

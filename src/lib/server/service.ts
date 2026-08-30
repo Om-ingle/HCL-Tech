@@ -2,8 +2,10 @@ import { prisma } from "@/lib/db";
 import { profileFromRow, profileToRow, roadmapFromRow } from "@/lib/serialize";
 import { analyzeSkillGap, resolveRole } from "@/lib/domain/skillGap";
 import { generateRoadmap } from "@/lib/domain/path";
+import { buildPool, fetchExternal, type ResourcePool } from "@/lib/discovery";
 import { hydrateRoadmap, type NavigatorView, type StepStateLite } from "@/lib/domain/nextAction";
 import { getRole, matchRole, skillName } from "@/lib/catalog";
+import { dynamicSkillDefsFor, ensureDynamicSkills } from "@/lib/catalog/dynamic";
 import type {
   KnownSkill,
   LearnerProfile,
@@ -30,10 +32,18 @@ function inputToKnownSkills(input: ProfileInput): KnownSkill[] {
 
 export async function loadProfile(id: string): Promise<LearnerProfile | null> {
   const row = await prisma.learnerProfile.findUnique({ where: { id } });
-  return row ? profileFromRow(row) : null;
+  if (!row) return null;
+  const profile = profileFromRow(row);
+  // Re-register the profile's AI-inferred skills so they resolve in this
+  // process — dynamic skills live in memory and are re-derived from the row.
+  ensureDynamicSkills(profile.preferences.dynamicSkills);
+  return profile;
 }
 
 export async function createProfile(input: ProfileInput, fixedId?: string): Promise<LearnerProfile> {
+  // Register AI-inferred skills before anything resolves target ids.
+  const dynamic = ensureDynamicSkills(input.dynamicSkills ?? []);
+  const dynamicSkills = dynamicSkillDefsFor(dynamic.map((s) => s.id));
   const profile: LearnerProfile = {
     id: fixedId ?? "",
     name: input.name,
@@ -46,7 +56,11 @@ export async function createProfile(input: ProfileInput, fixedId?: string): Prom
     careerOutcome: input.careerOutcome,
     interests: input.interests,
     knownSkills: inputToKnownSkills(input),
-    preferences: {},
+    preferences: {
+      // Target skills confirmed on the goal screen win over inference from here on.
+      ...(input.targetSkillIds?.length ? { targetSkillIds: input.targetSkillIds } : {}),
+      ...(dynamicSkills.length ? { dynamicSkills } : {}),
+    },
   };
   const row = profileToRow(profile);
   const created = fixedId
@@ -67,6 +81,21 @@ export async function deleteProfileCascade(id: string): Promise<void> {
   await prisma.learnerProfile.delete({ where: { id } }).catch(() => undefined);
 }
 
+// ── Resource discovery ────────────────────────────────────────────────────────
+/**
+ * Build the three-layer resource pool for a learner's target skills. Layer 2
+ * (external search) is attempted only when a server-side search key is
+ * configured; it fails soft, so this always resolves to a usable pool.
+ */
+export async function discoveryPool(profile: LearnerProfile, gap: SkillGap): Promise<ResourcePool> {
+  const goalTerms = [
+    ...(gap.resolution?.unknownTerms ?? []),
+    ...(gap.resolution?.matchedTerms ?? []),
+  ].slice(0, 4);
+  const external = await fetchExternal(gap.orderedSkillIds, profile.experienceLevel, goalTerms);
+  return buildPool(gap.orderedSkillIds, { external, level: profile.experienceLevel });
+}
+
 // ── Roadmap ─────────────────────────────────────────────────────────────────
 export async function latestRoadmap(profileId: string): Promise<Roadmap | null> {
   const row = await prisma.learningPath.findFirst({
@@ -79,13 +108,14 @@ export async function latestRoadmap(profileId: string): Promise<Roadmap | null> 
 /** Analyze gap, generate the next roadmap version, and persist it. */
 export async function regenerateRoadmap(profile: LearnerProfile): Promise<{ roadmap: Roadmap; gap: SkillGap }> {
   const gap = analyzeSkillGap(profile);
+  const pool = await discoveryPool(profile, gap);
   const last = await prisma.learningPath.findFirst({
     where: { profileId: profile.id },
     orderBy: { version: "desc" },
     select: { version: true },
   });
   const version = (last?.version ?? 0) + 1;
-  const roadmap = generateRoadmap(profile, gap, version);
+  const roadmap = generateRoadmap(profile, gap, version, { pool });
   await prisma.learningPath.create({
     data: {
       profileId: profile.id,

@@ -2,12 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Compass, Wand2, ArrowRight, Sparkles, Cpu } from "lucide-react";
+import { Compass, Wand2, ArrowRight, Sparkles, Cpu, Target, RefreshCw } from "lucide-react";
 import { ROLES, SKILLS, skillName } from "@/lib/catalog";
-import { api, type PersonaMeta } from "@/lib/client/api";
+import { api, type PersonaMeta, type TargetSkill, type GoalResolveResponse } from "@/lib/client/api";
 import { useAppStore } from "@/store/useAppStore";
 import { Button, Card, Chip, cx } from "@/components/ui";
-import type { Difficulty, LearningStyle, ProfileDraft } from "@/lib/domain/types";
+import type {
+  Difficulty,
+  GoalMethod,
+  GoalResolution,
+  LearningStyle,
+  ProfileDraft,
+} from "@/lib/domain/types";
 
 const EXPERIENCE: { id: Difficulty; label: string }[] = [
   { id: "beginner", label: "Beginner" },
@@ -29,6 +35,10 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
   const [source, setSource] = useState<"llm" | "fallback">("fallback");
+  const [provider, setProvider] = useState<string | undefined>(undefined);
+  const [resolution, setResolution] = useState<GoalResolution | null>(null);
+  const [targets, setTargets] = useState<TargetSkill[]>([]);
+  const [dynamicSkills, setDynamicSkills] = useState<GoalResolveResponse["dynamicSkills"]>([]);
   const [personas, setPersonas] = useState<PersonaMeta[]>([]);
   const [seeding, setSeeding] = useState<string | null>(null);
 
@@ -44,6 +54,10 @@ export default function HomePage() {
       const r = await api.onboard(text);
       setDraft(r.draft);
       setSource(r.source);
+      setProvider(r.provider);
+      setResolution(r.resolution);
+      setTargets(r.targets);
+      setDynamicSkills(r.dynamicSkills ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to read that.");
     } finally {
@@ -74,11 +88,11 @@ export default function HomePage() {
               <Compass className="h-3.5 w-3.5" /> Learning GPS
             </span>
             <h1 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">
-              Chart your route to the role you want.
+              Chart your route to any goal.
             </h1>
             <p className="mt-3 text-muted">
-              Tell me where you are and where you're headed. I'll map the skills between you and your goal —
-              and reroute as you learn.
+              Name the destination in your own words — Linux kernel developer, robotics engineer, quant
+              developer, anything. I'll map the skills between you and it, and reroute as you learn.
             </p>
           </div>
 
@@ -87,11 +101,11 @@ export default function HomePage() {
               value={text}
               onChange={(e) => setText(e.target.value)}
               rows={4}
-              placeholder="e.g. I'm a beginner who wants to become a data scientist. I can study ~10 hours a week and prefer hands-on projects."
+              placeholder="e.g. I know some C and Linux and I want to become a Linux kernel developer. About 8 hours a week."
               className="w-full resize-none rounded-xl border border-line bg-surface p-3 text-sm outline-none focus:border-route"
             />
             <div className="mt-3 flex items-center justify-between">
-              <p className="text-xs text-faint">Natural language — no forms required.</p>
+              <p className="text-xs text-faint">Any goal — no fixed list of roles.</p>
               <Button onClick={onboard} loading={loading} disabled={!text.trim()}>
                 <Wand2 className="h-4 w-4" /> Map my route
               </Button>
@@ -124,6 +138,10 @@ export default function HomePage() {
         <ConfirmDraft
           draft={draft}
           source={source}
+          provider={provider}
+          resolution={resolution}
+          targets={targets}
+          dynamicSkills={dynamicSkills}
           onBack={() => setDraft(null)}
           onError={setError}
           error={error}
@@ -145,6 +163,10 @@ function roleLabel(idOrText: string): string {
 function ConfirmDraft({
   draft,
   source,
+  provider,
+  resolution,
+  targets,
+  dynamicSkills,
   onBack,
   onConfirm,
   onError,
@@ -152,13 +174,20 @@ function ConfirmDraft({
 }: {
   draft: ProfileDraft;
   source: "llm" | "fallback";
+  provider?: string;
+  resolution: GoalResolution | null;
+  targets: TargetSkill[];
+  dynamicSkills: GoalResolveResponse["dynamicSkills"];
   onBack: () => void;
   onConfirm: (profileId: string, roleName: string) => void;
   onError: (msg: string | null) => void;
   error: string | null;
 }) {
   const [name, setName] = useState(draft.name ?? "Learner");
-  const [roleId, setRoleId] = useState(draft.targetRoleId ?? "");
+  // The resolver is the authority on the destination; `draft.targetRoleId` is
+  // only a guess from the same sentence, so it must not pin an open goal to a
+  // predefined role. A null roleId means "keep my own goal".
+  const [roleId, setRoleId] = useState(resolution ? resolution.roleId ?? "" : draft.targetRoleId ?? "");
   const [freeRole] = useState(draft.targetRole ?? "");
   const [experience, setExperience] = useState<Difficulty>(draft.experienceLevel ?? "beginner");
   const [style, setStyle] = useState<LearningStyle>(draft.learningStyle ?? "mixed");
@@ -167,18 +196,65 @@ function ConfirmDraft({
   const [known, setKnown] = useState<string[]>(draft.knownSkillIds ?? []);
   const [addSkill, setAddSkill] = useState("");
   const [saving, setSaving] = useState(false);
+  // Open-goal confirmation (§13): the goal and its target skills are editable.
+  const [goalText, setGoalText] = useState(draft.goalText ?? resolution?.goalText ?? "");
+  const [res, setRes] = useState<GoalResolution | null>(resolution);
+  const [picked, setPicked] = useState<TargetSkill[]>(targets);
+  const [dyn, setDyn] = useState<GoalResolveResponse["dynamicSkills"]>(dynamicSkills);
+  const [addTarget, setAddTarget] = useState("");
+  const [redetecting, setRedetecting] = useState(false);
 
-  const resolvedRoleName = roleId ? ROLES.find((r) => r.id === roleId)?.name ?? roleId : freeRole || "your goal";
+  const destination = roleId
+    ? ROLES.find((r) => r.id === roleId)?.name ?? roleId
+    : res?.label || freeRole || "your goal";
+
+  async function redetect() {
+    if (!goalText.trim()) return;
+    setRedetecting(true);
+    onError(null);
+    try {
+      // Re-read the goal text on its own — the whole point of the button — so a
+      // stale role selection can't steer the result back to where it was.
+      const r = await api.resolveGoal(goalText);
+      setRes(r.resolution);
+      setPicked(r.targets);
+      setDyn(r.dynamicSkills ?? []);
+      setRoleId(r.resolution.roleId ?? "");
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Couldn't re-read that goal.");
+    } finally {
+      setRedetecting(false);
+    }
+  }
+
+  // Picking a predefined role should visibly re-target the skill list, so the
+  // chips never contradict the destination shown above them.
+  async function onRoleChange(id: string) {
+    setRoleId(id);
+    if (!id) return void redetect();
+    setRedetecting(true);
+    onError(null);
+    try {
+      const r = await api.resolveGoal(goalText || id, id);
+      setRes(r.resolution);
+      setPicked(r.targets);
+      setDyn(r.dynamicSkills ?? []);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Couldn't load that role's skills.");
+    } finally {
+      setRedetecting(false);
+    }
+  }
 
   async function confirm() {
     setSaving(true);
     onError(null);
     try {
-      const targetRole = roleId || freeRole || "Software Engineer";
+      const targetRole = roleId || res?.label || freeRole || "Software Engineer";
       const bundle = await api.createProfile({
         name,
         targetRole,
-        goalText: draft.goalText ?? "",
+        goalText,
         experienceLevel: experience,
         learningStyle: style,
         weeklyHours,
@@ -186,6 +262,12 @@ function ConfirmDraft({
         careerOutcome: draft.careerOutcome ?? "",
         interests: draft.interests ?? [],
         knownSkillIds: known,
+        targetSkillIds: picked.map((t) => t.skillId),
+        // Only the dynamic defs actually backing a picked target — matched by id
+        // when we have one, else by name.
+        dynamicSkills: dyn.filter((d) =>
+          picked.some((p) => (d.id ? p.skillId === d.id : p.name === d.name)),
+        ),
       });
       onConfirm(bundle.profile.id, bundle.gap.roleName);
     } catch (e) {
@@ -201,7 +283,7 @@ function ConfirmDraft({
         <h2 className="text-lg font-semibold">Here's what I understood</h2>
         <span className="ml-auto inline-flex items-center gap-1 text-xs text-faint">
           {source === "llm" ? <Sparkles className="h-3.5 w-3.5" /> : <Cpu className="h-3.5 w-3.5" />}
-          {source === "llm" ? "read by AI" : "parsed locally"}
+          {source === "llm" ? `read by AI${provider ? ` · ${provider}` : ""}` : "parsed locally (no AI configured)"}
         </span>
       </div>
       {draft.notes?.map((n, i) => (
@@ -210,13 +292,27 @@ function ConfirmDraft({
         </p>
       ))}
 
+      <GoalPanel
+        res={res}
+        goalText={goalText}
+        setGoalText={setGoalText}
+        picked={picked}
+        setPicked={setPicked}
+        addTarget={addTarget}
+        setAddTarget={setAddTarget}
+        redetect={redetect}
+        redetecting={redetecting}
+      />
+
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <Field label="Your name">
           <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
         </Field>
-        <Field label="Target role">
-          <select value={roleId} onChange={(e) => setRoleId(e.target.value)} className={inputCls}>
-            {!roleId && <option value="">{freeRole ? `From your words: ${freeRole}` : "Choose a role"}</option>}
+        <Field label="Closest known role (optional)">
+          <select value={roleId} onChange={(e) => onRoleChange(e.target.value)} className={inputCls}>
+            <option value="">
+              {res?.label ? `Keep my goal: ${res.label}` : freeRole ? `Keep my goal: ${freeRole}` : "Keep my own goal"}
+            </option>
             {ROLES.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.name}
@@ -308,10 +404,149 @@ function ConfirmDraft({
           Back
         </Button>
         <Button onClick={confirm} loading={saving}>
-          Start my route to {resolvedRoleName} <ArrowRight className="h-4 w-4" />
+          Start my route to {destination} <ArrowRight className="h-4 w-4" />
         </Button>
       </div>
     </Card>
+  );
+}
+
+const METHOD_LABEL: Record<GoalMethod, string> = {
+  role: "matched a role we already map",
+  archetype: "matched a known goal pattern",
+  terms: "read the skills named in your words",
+  domain: "placed your goal in a field",
+  llm: "AI proposed skills, checked against our graph",
+  starter: "no clear signal — starting from foundations",
+};
+
+/**
+ * §13: show what the system inferred from an arbitrary goal — never silently
+ * swap it for a different role — and let the learner edit the target skills.
+ */
+function GoalPanel({
+  res,
+  goalText,
+  setGoalText,
+  picked,
+  setPicked,
+  addTarget,
+  setAddTarget,
+  redetect,
+  redetecting,
+}: {
+  res: GoalResolution | null;
+  goalText: string;
+  setGoalText: (v: string) => void;
+  picked: TargetSkill[];
+  setPicked: (v: TargetSkill[]) => void;
+  addTarget: string;
+  setAddTarget: (v: string) => void;
+  redetect: () => void;
+  redetecting: boolean;
+}) {
+  if (!res) return null;
+  const pickedIds = new Set(picked.map((t) => t.skillId));
+  const unsure = res.confidence < 0.6;
+
+  return (
+    <div className="mt-4 rounded-xl border border-line bg-surface p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Target className="h-4 w-4 text-route" />
+        <span className="text-sm font-semibold">Understood as</span>
+        <span className="rounded-full bg-route-soft px-2 py-0.5 text-xs font-medium text-route">
+          {res.label}
+        </span>
+        {res.domains.slice(0, 3).map((d) => (
+          <span key={d} className="rounded-full border border-line px-2 py-0.5 text-xs text-muted">
+            {d}
+          </span>
+        ))}
+        <span
+          className={cx(
+            "ml-auto text-xs",
+            unsure ? "text-warn" : "text-faint",
+          )}
+          title={res.methods.map((m) => METHOD_LABEL[m]).join(" · ")}
+        >
+          {unsure ? "Low confidence — please check" : "Confident"} ·{" "}
+          {Math.round(res.confidence * 100)}%
+        </span>
+      </div>
+
+      <p className="mt-2 text-xs text-muted">
+        How I read it: {res.methods.map((m) => METHOD_LABEL[m]).join("; ")}.
+      </p>
+      {res.unknownTerms.length > 0 && (
+        <p className="mt-1 text-xs text-warn">
+          I couldn't map {res.unknownTerms.slice(0, 4).join(", ")} to a skill I know — I'll use those words to
+          search for resources, but they won't change your route. Add the right skills below if I missed
+          something.
+        </p>
+      )}
+
+      <Field label="Your goal, in your words" className="mt-3">
+        <textarea
+          value={goalText}
+          onChange={(e) => setGoalText(e.target.value)}
+          rows={2}
+          className="w-full resize-none rounded-xl border border-line bg-paper p-3 text-sm outline-none focus:border-route"
+        />
+        <div className="mt-2 flex justify-end">
+          <Button variant="outline" onClick={redetect} loading={redetecting} disabled={!goalText.trim()}>
+            <RefreshCw className="h-4 w-4" /> Re-detect skills
+          </Button>
+        </div>
+      </Field>
+
+      <Field label={`Target skills I detected (${picked.length})`} className="mt-3">
+        <div className="flex flex-wrap gap-2">
+          {picked.length === 0 && (
+            <span className="text-xs text-faint">
+              None yet — add at least one, or re-detect from your goal.
+            </span>
+          )}
+          {picked.map((t) => (
+            <Chip
+              key={t.skillId}
+              active
+              onClick={() => setPicked(picked.filter((x) => x.skillId !== t.skillId))}
+              title={`${t.domain} — click to remove`}
+            >
+              {t.name} ✕
+            </Chip>
+          ))}
+        </div>
+        <div className="mt-2 flex gap-2">
+          <select
+            value={addTarget}
+            onChange={(e) => setAddTarget(e.target.value)}
+            className={cx(inputCls, "flex-1")}
+          >
+            <option value="">Add a target skill…</option>
+            {SKILLS.filter((s) => !pickedIds.has(s.id)).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} · {s.domain}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const s = SKILLS.find((x) => x.id === addTarget);
+              if (!s) return;
+              setPicked([...picked, { skillId: s.id, name: s.name, domain: s.domain, targetLevel: 3 }]);
+              setAddTarget("");
+            }}
+          >
+            Add
+          </Button>
+        </div>
+        <p className="mt-1 text-xs text-faint">
+          Prerequisites get filled in automatically — you only need the end goals.
+        </p>
+      </Field>
+    </div>
   );
 }
 

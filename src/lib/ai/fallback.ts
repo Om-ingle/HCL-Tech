@@ -89,7 +89,10 @@ export function extractProfileFallback(rawText: string): ProfileDraft {
   if (weeks) draft.timelineWeeks = weeks;
   if (knownSkillIds.length) draft.knownSkillIds = knownSkillIds;
 
-  if (!role) notes.push("Couldn't map your goal to a known role — pick the closest target role.");
+  if (!role)
+    notes.push(
+      "I read your goal directly from your words — no predefined role needed. Pick one below only if it helps.",
+    );
   return draft;
 }
 

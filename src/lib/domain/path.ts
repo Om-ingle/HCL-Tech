@@ -1,10 +1,5 @@
-import {
-  RESOURCES,
-  resourcesTeaching,
-  SKILL_BY_ID,
-  skillName,
-  QUIZ_BY_SKILL,
-} from "@/lib/catalog";
+import { SKILL_BY_ID, skillName } from "@/lib/catalog";
+import { buildPool, type ResourcePool } from "@/lib/discovery";
 import type {
   Difficulty,
   LearnerProfile,
@@ -15,11 +10,16 @@ import type {
   SkillGap,
   Step,
 } from "./types";
-import { buildContext, scoreResource, type RecommendContext } from "./recommend";
-import { buildWhy } from "./recommend";
+import { buildContext, buildWhy, scoreResource, type RecommendContext } from "./recommend";
+import { hasAssessment } from "./quizGen";
+import { prerequisiteNotes } from "./skillGap";
 
+// Domain-specific phrasing where we have it; every other domain (including any
+// added later) falls back to a generated title/milestone, so the roadmap is
+// never blocked on someone authoring copy for a new area.
 const PHASE_TITLES: Record<string, string> = {
   Programming: "Programming Foundations",
+  "Computer Science": "Core CS Foundations",
   Math: "Mathematics for the Path",
   Data: "Data Foundations",
   "Machine Learning": "Machine Learning Core",
@@ -28,11 +28,18 @@ const PHASE_TITLES: Record<string, string> = {
   Cloud: "Cloud & DevOps",
   "AI & LLMs": "AI & LLM Engineering",
   Security: "Security Core",
+  Systems: "Systems & Low-Level Foundations",
+  Robotics: "Robotics & Control",
+  Embedded: "Embedded & Firmware",
+  Graphics: "Graphics & Real-Time Rendering",
+  "Quantitative Finance": "Quantitative Finance",
+  "Quantum Computing": "Quantum Computing",
 };
 
 const MILESTONES: Record<string, string> = {
   Programming: "Write clean programs and use version control confidently.",
-  Math: "Hold the math intuition that ML and analysis build on.",
+  "Computer Science": "Reason about complexity and pick the right data structure.",
+  Math: "Hold the math intuition that the rest of the path builds on.",
   Data: "Load, clean, and explore real datasets end-to-end.",
   "Machine Learning": "Train, evaluate, and reason about ML models.",
   MLOps: "Deploy and operate a model behind a real API.",
@@ -40,14 +47,36 @@ const MILESTONES: Record<string, string> = {
   Cloud: "Containerize and run workloads in the cloud.",
   "AI & LLMs": "Build grounded, evaluated LLM applications.",
   Security: "Identify, model, and respond to real threats.",
+  Systems: "Read and write code that talks directly to the machine.",
+  Robotics: "Close a sense–plan–act loop on a real or simulated robot.",
+  Embedded: "Ship firmware that meets timing and power budgets.",
+  Graphics: "Put pixels on screen through a pipeline you understand.",
+  "Quantitative Finance": "Take a strategy from idea to honest backtest.",
+  "Quantum Computing": "Build, run, and reason about quantum circuits.",
 };
 
-function phaseTitle(domain: string): string {
-  return PHASE_TITLES[domain] ?? `${domain} Track`;
+function phaseTitle(domain: string, part = 0, parts = 1): string {
+  const base = PHASE_TITLES[domain] ?? `${domain} Track`;
+  if (parts <= 1) return base;
+  return part === 0 ? base : `${base} — Going Deeper`;
+}
+
+function milestoneFor(domain: string, skillIds: string[]): string {
+  const authored = MILESTONES[domain];
+  if (authored) return authored;
+  const top = skillIds
+    .map((id) => SKILL_BY_ID[id])
+    .filter(Boolean)
+    .sort((a, b) => b!.tier - a!.tier)[0];
+  return top
+    ? `Apply ${domain} skills in practice, up to ${top.name}.`
+    : `Apply ${domain} skills in practice.`;
 }
 
 /** Group ordered gap skills into coherent phases (one per domain run, split if large). */
-function groupIntoPhases(orderedSkillIds: string[]): { domain: string; skillIds: string[] }[] {
+function groupIntoPhases(
+  orderedSkillIds: string[],
+): { domain: string; skillIds: string[]; part: number; parts: number }[] {
   const byDomain = new Map<string, string[]>();
   const firstSeen = new Map<string, number>();
   orderedSkillIds.forEach((id, i) => {
@@ -58,38 +87,30 @@ function groupIntoPhases(orderedSkillIds: string[]): { domain: string; skillIds:
     }
     byDomain.get(d)!.push(id);
   });
-  const groups = Array.from(byDomain.entries())
+  return Array.from(byDomain.entries())
     .sort((a, b) => (firstSeen.get(a[0]) ?? 0) - (firstSeen.get(b[0]) ?? 0))
     .flatMap(([domain, ids]) => {
-      if (ids.length <= 5) return [{ domain, skillIds: ids }];
+      if (ids.length <= 5) return [{ domain, skillIds: ids, part: 0, parts: 1 }];
       // split oversized domains into balanced halves
       const mid = Math.ceil(ids.length / 2);
       return [
-        { domain, skillIds: ids.slice(0, mid) },
-        { domain, skillIds: ids.slice(mid) },
+        { domain, skillIds: ids.slice(0, mid), part: 0, parts: 2 },
+        { domain, skillIds: ids.slice(mid), part: 1, parts: 2 },
       ];
     });
-  return groups;
 }
 
 function bestResourceForSkill(
   skillId: string,
   ctx: RecommendContext,
   used: Set<string>,
+  pool: ResourcePool,
 ): Resource | undefined {
-  const candidates = resourcesTeaching(skillId).filter((r) => !used.has(r.id));
+  const candidates = pool.forSkill(skillId).filter((r) => !used.has(r.id));
   if (candidates.length === 0) return undefined;
   return candidates
     .map((r) => ({ r, score: scoreResource(r, ctx).score }))
     .sort((a, b) => b.score - a.score)[0].r;
-}
-
-function pickProject(skillIds: string[], used: Set<string>): Resource | undefined {
-  const set = new Set(skillIds);
-  const projects = RESOURCES.filter(
-    (r) => (r.type === "project" || r.type === "exercise") && r.skills.some((s) => set.has(s)) && !used.has(r.id),
-  );
-  return projects.sort((a, b) => b.skills.filter((s) => set.has(s)).length - a.skills.filter((s) => set.has(s)).length)[0];
 }
 
 function difficultyForTier(tier: number): Difficulty {
@@ -98,6 +119,7 @@ function difficultyForTier(tier: number): Difficulty {
 
 function resourceStep(resource: Resource, ctx: RecommendContext): Step {
   const res = scoreResource(resource, ctx);
+  const generated = resource.origin === "generated";
   return {
     id: `step-res-${resource.id}`,
     kind: resource.type === "project" || resource.type === "exercise" ? "project" : "resource",
@@ -108,24 +130,37 @@ function resourceStep(resource: Resource, ctx: RecommendContext): Step {
     prerequisiteStepIds: [],
     durationHours: resource.durationHours,
     difficulty: resource.difficulty,
-    why: buildWhy(res.factors, res.targets),
-    description: resource.description,
+    why: generated
+      ? `No vetted external resource covers ${resource.skills.map(skillName).join(", ")} yet, so this is a structured module built from the skill graph.`
+      : buildWhy(res.factors, res.targets),
+    description: resource.concepts?.length
+      ? `${resource.description}\n\nCovers:\n${resource.concepts.map((c) => `• ${c}`).join("\n")}`
+      : resource.description,
     url: resource.url,
   };
+}
+
+export interface RoadmapOptions {
+  /** Pre-built discovery pool. Built from the gap skills when omitted. */
+  pool?: ResourcePool;
 }
 
 export function generateRoadmap(
   profile: LearnerProfile,
   gap: SkillGap,
   version: number,
+  opts: RoadmapOptions = {},
 ): Roadmap {
   // Planning context: never exclude by completion — the roadmap is the plan;
   // StepState tracks what's done. Keeps the plan stable across regenerations.
   const ctx = buildContext(profile, gap);
+  const pool =
+    opts.pool ?? buildPool(gap.orderedSkillIds, { level: profile.experienceLevel });
   const groups = groupIntoPhases(gap.orderedSkillIds);
   const usedResources = new Set<string>();
   const phases: Phase[] = [];
   const weekly = Math.max(profile.weeklyHours || 6, 3);
+  const uncovered: string[] = [];
 
   groups.forEach((group, index) => {
     const steps: Step[] = [];
@@ -133,29 +168,34 @@ export function generateRoadmap(
 
     // one resource per gap skill (deduped globally)
     for (const skillId of group.skillIds) {
-      const resource = bestResourceForSkill(skillId, ctx, usedResources);
-      if (!resource) continue;
+      const resource = bestResourceForSkill(skillId, ctx, usedResources, pool);
+      if (!resource) {
+        uncovered.push(skillId);
+        continue;
+      }
       usedResources.add(resource.id);
       const step = resourceStep(resource, ctx);
       steps.push(step);
       resourceStepIds.push(step.id);
     }
 
-    // a hands-on project for the phase
-    const project = pickProject(group.skillIds, usedResources);
-    if (project) {
+    // a hands-on project for the phase — authored if one fits, else generated
+    // from the skill's project ladder at the learner's level
+    const project = pool.projectFor(group.skillIds, profile.experienceLevel);
+    if (project && !usedResources.has(project.id)) {
       usedResources.add(project.id);
       const step = resourceStep(project, ctx);
+      step.kind = "project";
       step.prerequisiteStepIds = [...resourceStepIds];
       steps.push(step);
     }
 
-    // a checkpoint assessment
-    const assessSkills = group.skillIds.filter((s) => (QUIZ_BY_SKILL[s]?.length ?? 0) > 0);
+    // a checkpoint assessment (graph-generated when no curated quiz exists)
+    const assessSkills = group.skillIds.filter((s) => hasAssessment(s));
     const assessment: Step = {
       id: `p${index}-assessment`,
       kind: "assessment",
-      title: `Checkpoint: ${phaseTitle(group.domain)}`,
+      title: `Checkpoint: ${phaseTitle(group.domain, group.part, group.parts)}`,
       type: "assessment",
       skillIds: assessSkills.length ? assessSkills : group.skillIds,
       prerequisiteStepIds: [...resourceStepIds],
@@ -170,12 +210,12 @@ export function generateRoadmap(
     phases.push({
       id: `phase-${index}`,
       index,
-      title: phaseTitle(group.domain),
+      title: phaseTitle(group.domain, group.part, group.parts),
       subtitle: `${group.skillIds.length} skill${group.skillIds.length > 1 ? "s" : ""} · ${group.skillIds.map(skillName).slice(0, 3).join(", ")}`,
       skillIds: group.skillIds,
       concepts: group.skillIds.map(skillName),
       steps,
-      milestone: MILESTONES[group.domain] ?? `Apply ${group.domain} skills in practice.`,
+      milestone: milestoneFor(group.domain, group.skillIds),
       estimatedWeeks: Math.max(1, Math.ceil(totalHours / weekly)),
       prerequisitePhaseIds: [],
     });
@@ -198,6 +238,12 @@ export function generateRoadmap(
 
   // Capstone phase
   const capstoneIndex = phases.length;
+  const capstoneSkills = gap.orderedSkillIds
+    .map((id) => SKILL_BY_ID[id])
+    .filter(Boolean)
+    .sort((a, b) => b!.tier - a!.tier)
+    .slice(0, 3)
+    .map((s) => s!.id);
   phases.push({
     id: `phase-${capstoneIndex}`,
     index: capstoneIndex,
@@ -211,12 +257,14 @@ export function generateRoadmap(
         kind: "project",
         title: `Capstone: a portfolio project for ${gap.roleName}`,
         type: "project",
-        skillIds: [],
+        skillIds: capstoneSkills,
         prerequisiteStepIds: [],
         durationHours: 20,
         difficulty: "advanced",
         why: `Ties every phase together into one artifact that demonstrates ${gap.roleName} skills to employers.`,
-        description: "Scope, build, document, and present an end-to-end project.",
+        description: capstoneSkills.length
+          ? `Scope, build, document, and present an end-to-end project that visibly uses ${capstoneSkills.map(skillName).join(", ")}.`
+          : "Scope, build, document, and present an end-to-end project.",
       },
     ],
     milestone: `Ship a portfolio-ready project proving ${gap.roleName} readiness.`,
@@ -233,6 +281,7 @@ export function generateRoadmap(
       partial: gap.partial.length,
       missing: gap.missing.length,
     },
+    how: buildHow(gap, pool, uncovered),
   };
 
   return { version, phases, rationale };
@@ -249,4 +298,42 @@ function buildStrategy(gap: SkillGap): string {
   }
   const first = gap.orderedSkillIds.slice(0, 3).map(skillName).join(" → ");
   return `Start with foundations (${first}), then build upward. Advanced topics stay locked until their prerequisites are complete.`;
+}
+
+/**
+ * "How we built your path" — the provenance the UI shows so an unusual goal
+ * never looks like it was silently replaced with something else.
+ */
+function buildHow(gap: SkillGap, pool: ResourcePool, uncovered: string[]): string[] {
+  const how: string[] = [];
+  const r = gap.resolution;
+
+  if (r) {
+    how.push(...r.notes);
+    if (r.unknownTerms.length) {
+      const terms = r.unknownTerms.slice(0, 3);
+      const one = terms.length === 1;
+      how.push(
+        `We couldn't map ${terms.map((t) => `“${t}”`).join(", ")} to a known skill — ${one ? "it's" : "they're"} used to sharpen resource search, not to change your route.`,
+      );
+    }
+  }
+
+  how.push(...prerequisiteNotes(gap.orderedSkillIds));
+
+  const { catalog, canonical, external, generated } = pool.stats;
+  const sources: string[] = [];
+  if (catalog) sources.push(`${catalog} from our curated library`);
+  if (canonical) sources.push(`${canonical} official/university sources`);
+  if (external) sources.push(`${external} found by live search`);
+  if (sources.length) how.push(`Resources: ${sources.join(", ")}.`);
+  if (generated) {
+    how.push(
+      `${generated} skill${generated === 1 ? "" : "s"} had no vetted resource, so we generated guided study modules from the skill graph instead of leaving gaps.`,
+    );
+  }
+  if (uncovered.length) {
+    how.push(`Still looking for material on ${uncovered.slice(0, 3).map(skillName).join(", ")}.`);
+  }
+  return how;
 }

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Target, ExternalLink, ChevronRight, TrendingUp } from "lucide-react";
+import { Target, ExternalLink, ChevronRight, TrendingUp, Compass } from "lucide-react";
 import { api } from "@/lib/client/api";
 import { skillName } from "@/lib/catalog";
 import { useAppStore } from "@/store/useAppStore";
@@ -10,11 +10,14 @@ import { Badge, Card, Spinner, cx } from "@/components/ui";
 import { FeedbackBar } from "@/components/FeedbackBar";
 import type { Recommendation, SkillGap, SkillGapItem } from "@/lib/domain/types";
 
+type Discovery = NonNullable<Awaited<ReturnType<typeof api.skillGap>>["discovery"]>;
+
 export default function GapPage() {
   const router = useRouter();
   const profileId = useAppStore((s) => s.profileId);
   const [gap, setGap] = useState<SkillGap | null>(null);
   const [recs, setRecs] = useState<Recommendation[]>([]);
+  const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async (id: string) => {
@@ -22,6 +25,7 @@ export default function GapPage() {
     const r = await api.skillGap(id);
     setGap(r.gap);
     setRecs(r.recommendations);
+    setDiscovery(r.discovery ?? null);
     setLoading(false);
   }, []);
 
@@ -61,6 +65,27 @@ export default function GapPage() {
             </div>
           </div>
         )}
+
+        {/* §13/§14: what the resolver actually inferred from an open goal. */}
+        {gap.resolution && (
+          <div className="mt-4 rounded-xl border border-line bg-surface p-3">
+            <p className="flex flex-wrap items-center gap-2 text-xs font-medium uppercase tracking-wide text-faint">
+              <Compass className="h-3.5 w-3.5" /> How we read your goal
+              {gap.resolution.domains.slice(0, 3).map((d) => (
+                <span key={d} className="rounded-full bg-raised px-2 py-0.5 text-[11px] normal-case text-muted">
+                  {d}
+                </span>
+              ))}
+            </p>
+            <ul className="mt-2 space-y-1">
+              {gap.resolution.notes.map((n, i) => (
+                <li key={i} className="text-xs text-muted">
+                  • {n}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </Card>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -76,6 +101,27 @@ export default function GapPage() {
           <h2 className="text-lg font-semibold">Top recommendations</h2>
         </div>
         <p className="mt-1 text-sm text-muted">Scored against your gaps, level, and preferences — every point is explained.</p>
+        {discovery && (
+          <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+            <span className="rounded-full bg-surface px-2 py-0.5 text-muted" title="Hand-vetted resources in our library">
+              {discovery.catalog} curated
+            </span>
+            <span className="rounded-full bg-surface px-2 py-0.5 text-muted" title="Official docs, university courses, and reputable open-source material">
+              {discovery.canonical} official / university
+            </span>
+            <span className="rounded-full bg-surface px-2 py-0.5 text-muted" title="Found by live search — requires a server-side search key">
+              {discovery.external} found by search
+            </span>
+            <span className="rounded-full bg-surface px-2 py-0.5 text-muted" title="Built from the skill graph where no vetted resource exists — no invented links">
+              {discovery.generated} study modules
+            </span>
+            {discovery.skillsGeneratedOnly.length > 0 && (
+              <span className="rounded-full bg-marker-soft px-2 py-0.5 text-marker">
+                still looking for material on {discovery.skillsGeneratedOnly.slice(0, 3).map(skillName).join(", ")}
+              </span>
+            )}
+          </div>
+        )}
         <div className="mt-4 space-y-3">
           {recs.map((rec) => (
             <RecommendationCard key={rec.resource.id} rec={rec} profileId={profileId} onFeedback={() => load(profileId)} />
@@ -168,10 +214,17 @@ function RecommendationCard({
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <span className="rounded-full bg-route-soft px-2 py-0.5 text-xs font-semibold text-route">{rec.score}</span>
-          {rec.resource.url && (
+          {rec.resource.url ? (
             <a href={rec.resource.url} target="_blank" rel="noreferrer" className="text-faint hover:text-route">
               <ExternalLink className="h-4 w-4" />
             </a>
+          ) : (
+            <span
+              className="text-faint"
+              title="Guided study module built from the skill graph — no external link to invent"
+            >
+              <Compass className="h-4 w-4" />
+            </span>
           )}
         </div>
       </div>

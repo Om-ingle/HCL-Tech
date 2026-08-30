@@ -164,8 +164,21 @@ export function applyTimeChange(profile: LearnerProfile, weeklyHours: number): A
 }
 
 export function applyGoalChange(profile: LearnerProfile, targetRole: string, roleName: string): AdaptResult {
+  // Retargeting invalidates the confirmed target-skill list: those skills were
+  // confirmed for the OLD goal, and if left in place they override inference
+  // (resolveGoalForProfile) so the "new" route would replay the old skills.
+  // AI-inferred dynamic skills are equally old-goal content — dropped together.
+  const { targetSkillIds: _staleSkills, dynamicSkills: _staleDynamic, ...prefs } = profile.preferences ?? {};
   return {
-    profile: { ...profile, targetRole },
+    profile: {
+      ...profile,
+      targetRole,
+      // The goal text is the old goal's own words — resolveGoal scans it for
+      // skill terms, so leaving it would keep pulling old-goal skills into the
+      // new route. The destination change replaces it.
+      goalText: roleName,
+      preferences: prefs,
+    },
     changes: [`New destination: ${roleName}. Rerouting your path from where you are now.`],
     regenerate: true,
   };

@@ -10,6 +10,8 @@ interface Msg {
   role: "user" | "assistant";
   text: string;
   source?: "llm" | "fallback";
+  provider?: string;
+  note?: string;
 }
 
 const SUGGESTIONS = [
@@ -33,12 +35,18 @@ export function Assistant() {
   async function ask(q: string) {
     const question = q.trim();
     if (!question || busy) return;
+    // Short-term memory only: the last 3 turns, so follow-ups like "why?" or
+    // "can I skip it?" make sense without re-sending the whole chat (cost).
+    const history = messages.slice(-3).map((m) => ({ role: m.role, text: m.text }));
     setMessages((m) => [...m, { role: "user", text: question }]);
     setInput("");
     setBusy(true);
     try {
-      const r = await api.assistant(profileId, question);
-      setMessages((m) => [...m, { role: "assistant", text: r.text, source: r.source }]);
+      const r = await api.assistant(profileId, question, history);
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", text: r.text, source: r.source, provider: r.provider, note: r.note },
+      ]);
     } catch (e) {
       setMessages((m) => [
         ...m,
@@ -88,9 +96,12 @@ export function Assistant() {
               >
                 {m.text}
                 {m.role === "assistant" && m.source && (
-                  <div className="mt-1 flex items-center gap-1 text-[10px] text-faint">
-                    {m.source === "llm" ? <Sparkles className="h-3 w-3" /> : <Cpu className="h-3 w-3" />}
-                    {m.source === "llm" ? "AI" : "built-in"}
+                  <div className="mt-1 text-[10px] text-faint">
+                    <div className="flex items-center gap-1">
+                      {m.source === "llm" ? <Sparkles className="h-3 w-3" /> : <Cpu className="h-3 w-3" />}
+                      {m.source === "llm" ? `AI: ${m.provider ?? "configured model"}` : "Fallback"}
+                    </div>
+                    {m.note && <div className="mt-0.5 opacity-80">{m.note}</div>}
                   </div>
                 )}
               </div>

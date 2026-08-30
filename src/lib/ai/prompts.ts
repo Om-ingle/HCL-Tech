@@ -37,9 +37,64 @@ export function buildExtractionRequest(text: string): StructuredRequest {
     system: EXTRACT_SYSTEM,
     messages: [{ role: "user", content: text }],
     temperature: 0.1,
-    maxTokens: 700,
+    maxTokens: 1500,
     schema: EXTRACT_SCHEMA,
     schemaName: "LearnerProfileDraft",
+  };
+}
+
+// ── Goal resolution ───────────────────────────────────────────────────────────
+// The ONLY structured LLM call in the open-goal flow. It returns a goal label, a
+// domain, and candidate SKILL NAMES — never resources, never URLs, never a
+// roadmap. Everything it returns is validated against our skill graph, so a
+// hallucinated skill simply doesn't resolve and is dropped.
+export const GOAL_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    goal: {
+      type: "string",
+      description: 'short canonical name for the goal, e.g. "Linux Kernel Developer" or "Battery Chemistry & Electrochemistry"',
+    },
+    domain: {
+      type: "string",
+      description:
+        "one broad field — ANY field of study is valid (Systems, Robotics, Chemistry, Energy Storage, Music, Epidemiology, Machine Learning, …)",
+    },
+    candidateSkills: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "short concrete skill/topic name, e.g. Electrochemistry" },
+          blurb: { type: "string", description: "one line (≤ 20 words) on what this skill involves" },
+        },
+        required: ["name"],
+      },
+      description:
+        "6-12 concrete skills this goal requires, foundational → advanced. Plain strings are also accepted.",
+    },
+  },
+};
+
+const GOAL_SYSTEM = `You map a learner's stated goal onto the skills it requires.
+Rules:
+- ANY field of study is valid — battery chemistry, archaeology, music theory — not just software. Infer the domain honestly.
+- Return ONLY skill/topic names (subjects, techniques, technologies). Short noun phrases.
+- Do NOT return courses, books, websites, URLs, links, providers, or a study plan.
+- Do NOT return soft skills (communication, teamwork) or job titles.
+- Include the foundations the goal genuinely depends on, not just the advanced topics.
+- If the goal is vague, infer the most standard interpretation and say so in "goal".`;
+
+export function buildGoalRequest(goalText: string): StructuredRequest {
+  return {
+    system: GOAL_SYSTEM,
+    messages: [{ role: "user", content: `My goal: ${goalText}` }],
+    temperature: 0.1,
+    // Reasoning-style models spend output tokens on thinking before the JSON —
+    // a small budget truncates the object mid-brace and the whole call is lost.
+    maxTokens: 1500,
+    schema: GOAL_SCHEMA,
+    schemaName: "GoalSkills",
   };
 }
 
@@ -77,15 +132,29 @@ export function contextToText(ctx: AssistantContext): string {
 
 const ASSISTANT_SYSTEM = `You are the learner's AI Navigator inside a personalized learning-path app.
 Answer in 2–5 sentences, warm but concise. Use ONLY the provided learner context — reference their real role, skills, phase, and next action.
+The messages before the final question are the recent conversation; use them to resolve short follow-ups ("why?", "after that?", "can I skip it?").
 If they ask to change the plan (shorten it, change goal, change hours), explain what would change and mention they can apply it with the app's controls (Simulate / feedback / checkpoints). Never invent resources or scores.`;
 
-export function buildAssistantRequest(question: string, ctx: AssistantContext): LLMRequest {
+export interface AssistantHistoryMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export function buildAssistantRequest(
+  question: string,
+  ctx: AssistantContext,
+  history: AssistantHistoryMessage[] = [],
+): LLMRequest {
+  // Only the last 3 turns — enough for "why this?" / "can I skip it?" follow-ups
+  // while keeping tokens (and cost) minimal. Provider-side memory is never assumed.
+  const recent = history.slice(-3);
   return {
     system: ASSISTANT_SYSTEM,
     messages: [
+      ...recent.map((m) => ({ role: m.role, content: m.text })),
       { role: "user", content: `Here is my learning context:\n${contextToText(ctx)}\n\nMy question: ${question}` },
     ],
     temperature: 0.4,
-    maxTokens: 400,
+    maxTokens: 900,
   };
 }

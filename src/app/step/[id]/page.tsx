@@ -14,6 +14,7 @@ import {
   Trophy,
   RotateCcw,
   Navigation,
+  Compass,
 } from "lucide-react";
 import { api, type NavigatorBundle } from "@/lib/client/api";
 import type { HydratedStep } from "@/lib/domain/nextAction";
@@ -133,6 +134,8 @@ export default function StepPage() {
 
   const Icon = KIND_ICON[step.kind] ?? BookOpen;
   const allAnswered = questions ? questions.every((q) => answers[q.id] != null) : false;
+  // A resource step with no URL is a generated module — never a broken link.
+  const isModule = step.kind === "resource" && !step.url;
 
   return (
     <div className="mx-auto mt-2 max-w-2xl space-y-4">
@@ -180,7 +183,24 @@ export default function StepPage() {
           <p className="mt-1 text-sm text-ink">{step.why}</p>
         </div>
 
-        {step.description && <p className="mt-3 text-sm text-muted">{step.description}</p>}
+        {step.description && (
+          <p className="mt-3 whitespace-pre-line text-sm text-muted">{step.description}</p>
+        )}
+
+        {/* No vetted external resource covers this skill yet — say so plainly
+            rather than shipping an invented link (§4). */}
+        {isModule && (
+          <div className="mt-3 rounded-xl border border-line bg-surface p-3">
+            <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-faint">
+              <Compass className="h-3.5 w-3.5" /> Guided study module
+            </p>
+            <p className="mt-1 text-sm text-muted">
+              We didn't find a resource we'd vouch for on this skill, so we built this outline from the skill
+              graph instead of inventing a link. Work through the points above using the official
+              documentation for each topic, then take the checkpoint.
+            </p>
+          </div>
+        )}
 
         {step.skillIds.length > 0 && (
           <div className="mt-3">

@@ -7,6 +7,12 @@ export const onboardSchema = z.object({
   text: z.string().min(1).max(4000),
 });
 
+// Resolve a free-text goal to target skills (open-goal confirmation screen).
+export const goalResolveSchema = z.object({
+  text: z.string().min(1).max(4000),
+  targetRole: z.string().max(120).optional(),
+});
+
 export const knownSkillSchema = z.object({
   skillId: z.string(),
   proficiency: z.number().int().min(0).max(3),
@@ -25,6 +31,21 @@ export const profileInputSchema = z.object({
   interests: z.array(z.string().max(60)).max(30).default([]),
   knownSkillIds: z.array(z.string()).max(80).default([]),
   knownSkills: z.array(knownSkillSchema).max(80).optional(),
+  /** Learner-confirmed target skills from the goal-confirmation screen. */
+  targetSkillIds: z.array(z.string()).max(60).optional(),
+  /** AI-inferred skills outside the catalog, to be registered + persisted. */
+  dynamicSkills: z
+    .array(
+      z.object({
+        id: z.string().max(80).optional(),
+        name: z.string().min(1).max(80),
+        domain: z.string().max(60).default("Custom"),
+        description: z.string().max(400).optional(),
+        tier: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]).optional(),
+      }),
+    )
+    .max(40)
+    .optional(),
 });
 
 export const profileUpdateSchema = profileInputSchema.partial().extend({
@@ -70,6 +91,17 @@ export const simulateSchema = z
 export const assistantSchema = z.object({
   profileId: z.string().optional(),
   question: z.string().min(1).max(2000),
+  // Short-term memory: the client sends only the last few turns so follow-ups
+  // ("why this?", "can I skip it?") resolve without re-sending the chat log.
+  history: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        text: z.string().max(2000),
+      }),
+    )
+    .max(6)
+    .optional(),
 });
 
 export const aiConfigSchema = z.object({

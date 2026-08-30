@@ -1,4 +1,6 @@
 import { profileUpdateSchema } from "@/lib/validation/schemas";
+import { getRole } from "@/lib/catalog";
+import { ensureDynamicSkills } from "@/lib/catalog/dynamic";
 import {
   buildNavigator,
   deleteProfileCascade,
@@ -28,11 +30,27 @@ export const PATCH = route(async (req, { params }: Ctx) => {
   if (!existing) return fail("Profile not found.", 404);
   const patch = await parseBody(req, profileUpdateSchema.omit({ id: true }).partial());
 
+  // Changing the goal invalidates a confirmed target-skill list from the old
+  // goal — otherwise the override keeps the previous route's skills alive.
+  const goalChanged =
+    (patch.goalText !== undefined && patch.goalText.trim() !== existing.goalText.trim()) ||
+    (patch.targetRole !== undefined && patch.targetRole !== existing.targetRole);
+
+  // Register any AI-inferred skills from the patch before gap analysis uses them.
+  if (patch.dynamicSkills?.length) ensureDynamicSkills(patch.dynamicSkills);
+
   const next: LearnerProfile = {
     ...existing,
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.targetRole !== undefined ? { targetRole: normalizeTargetRole(patch.targetRole) } : {}),
     ...(patch.goalText !== undefined ? { goalText: patch.goalText } : {}),
+    // A destination change alone (no new goal text) must not leave the old
+    // goal's words in goalText — resolveGoal scans it for skill terms.
+    ...(patch.targetRole !== undefined &&
+    patch.goalText === undefined &&
+    patch.targetRole !== existing.targetRole
+      ? { goalText: getRole(normalizeTargetRole(patch.targetRole))?.name ?? patch.targetRole }
+      : {}),
     ...(patch.experienceLevel !== undefined ? { experienceLevel: patch.experienceLevel } : {}),
     ...(patch.learningStyle !== undefined ? { learningStyle: patch.learningStyle } : {}),
     ...(patch.weeklyHours !== undefined ? { weeklyHours: patch.weeklyHours } : {}),
@@ -44,6 +62,29 @@ export const PATCH = route(async (req, { params }: Ctx) => {
       : patch.knownSkillIds !== undefined
         ? { knownSkills: patch.knownSkillIds.map((skillId) => ({ skillId, proficiency: 2 })) }
         : {}),
+    // Retargeting: an empty array clears the override and returns to inference.
+    ...(patch.targetSkillIds !== undefined
+      ? {
+          preferences: {
+            ...existing.preferences,
+            targetSkillIds: patch.targetSkillIds.length ? patch.targetSkillIds : undefined,
+            // New skills for a new goal — old dynamic skills don't carry over
+            // unless the patch explicitly re-supplies them.
+            dynamicSkills: patch.dynamicSkills ?? existing.preferences.dynamicSkills,
+          },
+        }
+      : goalChanged
+        ? { preferences: { ...existing.preferences, targetSkillIds: undefined, dynamicSkills: undefined } }
+        : {}),
+    ...(patch.dynamicSkills !== undefined && patch.targetSkillIds === undefined
+      ? {
+          preferences: {
+            ...existing.preferences,
+            ...(goalChanged ? { targetSkillIds: undefined } : {}),
+            dynamicSkills: patch.dynamicSkills.length ? patch.dynamicSkills : undefined,
+          },
+        }
+      : {}),
   };
   await saveProfile(next);
   await regenerateRoadmap(next);

@@ -1,4 +1,6 @@
 import { RESOURCES, skillName } from "@/lib/catalog";
+import type { ResourcePool } from "@/lib/discovery";
+import { sourceQuality } from "@/lib/discovery/search";
 import type {
   Difficulty,
   LearnerProfile,
@@ -17,6 +19,9 @@ export interface RecommendContext {
   knownStrong: Set<string>;
   completedResourceIds: Set<string>;
   focusSkillIds?: Set<string>;
+  /** Every skill the resolved goal asks for — used for goal-relevance scoring. */
+  goalSkillIds?: Set<string>;
+  goalLabel?: string;
 }
 
 export interface RecommendOptions {
@@ -24,6 +29,8 @@ export interface RecommendOptions {
   minScore?: number;
   completedResourceIds?: string[];
   focusSkillIds?: string[];
+  /** Discovery pool. When present its resources are scored alongside the catalog. */
+  pool?: ResourcePool;
 }
 
 export function buildContext(
@@ -40,6 +47,8 @@ export function buildContext(
     ),
     completedResourceIds: new Set(opts?.completedResourceIds ?? []),
     focusSkillIds: opts?.focusSkillIds ? new Set(opts.focusSkillIds) : undefined,
+    goalSkillIds: gap.resolution ? new Set(gap.resolution.targets.map((t) => t.skillId)) : undefined,
+    goalLabel: gap.resolution?.label ?? gap.roleName,
   };
 }
 
@@ -138,6 +147,48 @@ export function scoreResource(resource: Resource, ctx: RecommendContext): ScoreR
     add("disliked", "Marked not useful", -1000, "You marked this not useful");
   }
 
+  // Goal relevance — is this on the skill list the resolved goal actually asks for?
+  if (ctx.goalSkillIds?.size) {
+    const onGoal = resource.skills.filter((s) => ctx.goalSkillIds!.has(s));
+    add(
+      "goal",
+      "On your goal's skill list",
+      Math.min(onGoal.length, 2) * 6,
+      onGoal.length ? `Part of what ${ctx.goalLabel ?? "your goal"} requires` : "",
+    );
+  }
+
+  // Source quality (§6) — official docs, universities, OER and reputable OSS
+  // outrank random content farms. Generated modules are a deliberate last resort.
+  if (resource.origin === "generated" || !resource.url) {
+    add("source", "Generated study module", -6, "A structured module we built because no vetted resource covers this yet");
+  } else {
+    const q = sourceQuality(resource.url);
+    add(
+      "source",
+      q > 0 ? "Trusted source" : "Unverified source",
+      q >= 2 ? 8 : q === 1 ? 4 : q < 0 ? -10 : 0,
+      q >= 2
+        ? `${resource.provider} is an official or academic source`
+        : q < 0
+          ? "Lower-quality publisher"
+          : "",
+    );
+  }
+
+  // Duration fit — a 40-hour course is a poor next step at 4h/week.
+  const weeks = resource.durationHours / Math.max(ctx.profile.weeklyHours || 6, 3);
+  add(
+    "duration",
+    weeks <= 3 ? "Fits your schedule" : "Long commitment",
+    weeks <= 1 ? 6 : weeks <= 3 ? 3 : weeks <= 6 ? 0 : -6,
+    weeks <= 1
+      ? `About ${Math.max(1, Math.round(resource.durationHours))}h — under a week at your pace`
+      : weeks > 6
+        ? `Roughly ${Math.round(weeks)} weeks at ${ctx.profile.weeklyHours}h/week`
+        : "",
+  );
+
   const score = factors.reduce((s, x) => s + x.contribution, 0);
   return { score, factors, targets };
 }
@@ -154,22 +205,40 @@ export function buildWhy(factors: ScoreFactor[], targets: string[]): string {
   return `${gapLead}${extra ? ` ${extra}.` : ""}`.trim();
 }
 
+/**
+ * Candidates = the discovery pool (canonical + external + generated for the
+ * learner's target skills) unioned with the full curated catalog, so open-goal
+ * paths gain resources without losing anything the catalog already offered.
+ */
+function candidates(opts?: RecommendOptions): Resource[] {
+  if (!opts?.pool) return RESOURCES;
+  const seen = new Set<string>();
+  const out: Resource[] = [];
+  for (const r of [...opts.pool.all(), ...RESOURCES]) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    out.push(r);
+  }
+  return out;
+}
+
 export function recommend(
   profile: LearnerProfile,
   gap: SkillGap,
   opts?: RecommendOptions,
 ): Recommendation[] {
   const ctx = buildContext(profile, gap, opts);
-  const scored = RESOURCES.map((r) => {
-    const res = scoreResource(r, ctx);
-    return {
-      resource: r,
-      score: Math.round(res.score),
-      factors: res.factors,
-      why: buildWhy(res.factors, res.targets),
-      targetsSkills: res.targets,
-    } as Recommendation;
-  })
+  const scored = candidates(opts)
+    .map((r) => {
+      const res = scoreResource(r, ctx);
+      return {
+        resource: r,
+        score: Math.round(res.score),
+        factors: res.factors,
+        why: buildWhy(res.factors, res.targets),
+        targetsSkills: res.targets,
+      } as Recommendation;
+    })
     .filter((r) => r.score > (opts?.minScore ?? 0))
     .sort((a, b) => b.score - a.score);
 

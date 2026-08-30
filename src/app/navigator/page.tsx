@@ -9,6 +9,7 @@ import { Button, Card, Spinner } from "@/components/ui";
 import { NextBestAction } from "@/components/NextBestAction";
 import { RouteMap } from "@/components/RouteMap";
 import { Simulate } from "@/components/Simulate";
+import { HowWeBuilt } from "@/components/HowWeBuilt";
 
 export default function NavigatorPage() {
   const router = useRouter();
@@ -170,6 +171,7 @@ export default function NavigatorPage() {
             </div>
             <p className="mt-1 text-xs text-muted">{roadmap.rationale.strategy}</p>
           </Card>
+          <HowWeBuilt how={roadmap.rationale.how} />
         </div>
       </div>
     </div>

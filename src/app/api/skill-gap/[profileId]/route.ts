@@ -1,6 +1,6 @@
 import { analyzeSkillGap } from "@/lib/domain/skillGap";
 import { recommend } from "@/lib/domain/recommend";
-import { loadProfile, statesMap } from "@/lib/server/service";
+import { discoveryPool, loadProfile, statesMap } from "@/lib/server/service";
 import { fail, ok, route } from "@/lib/server/http";
 
 export const runtime = "nodejs";
@@ -18,6 +18,12 @@ export const GET = route(async (_req, { params }: Ctx) => {
     .filter(([id, s]) => s.status === "completed" && id.startsWith("step-res-"))
     .map(([id]) => id.replace("step-res-", ""));
 
-  const recommendations = recommend(profile, gap, { limit: 6, minScore: 1, completedResourceIds });
-  return ok({ gap, recommendations });
+  const pool = await discoveryPool(profile, gap);
+  const recommendations = recommend(profile, gap, {
+    limit: 6,
+    minScore: 1,
+    completedResourceIds,
+    pool,
+  });
+  return ok({ gap, recommendations, discovery: pool.stats });
 });

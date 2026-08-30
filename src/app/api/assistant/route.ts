@@ -7,12 +7,15 @@ export const runtime = "nodejs";
 
 // Grounded Q&A assistant. Uses the learner's real context when a profile is given.
 export const POST = route(async (req) => {
-  const { profileId, question } = await parseBody(req, assistantSchema);
+  const { profileId, question, history } = await parseBody(req, assistantSchema);
 
   if (profileId) {
     const ctx = await buildAssistantContext(profileId);
     if (ctx) {
-      const [answer, aiStatus] = await Promise.all([answerQuestion(question, ctx), getAiStatus()]);
+      const [answer, aiStatus] = await Promise.all([
+        answerQuestion(question, ctx, history ?? []),
+        getAiStatus(),
+      ]);
       return ok({ ...answer, aiStatus });
     }
   }

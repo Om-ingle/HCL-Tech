@@ -1,0 +1,16 @@
+const path = require("path");
+const jiti = require("jiti")(__filename, { alias: { "@": path.resolve(__dirname, "..", "src") } });
+const t = (label, fn) => { const t0 = Date.now(); const r = fn(); console.log("  ", label, Date.now() - t0, "ms"); return r; };
+const { analyzeSkillGap } = jiti("../src/lib/domain/skillGap.ts");
+const { buildPool } = jiti("../src/lib/discovery/index.ts");
+const { generateRoadmap } = jiti("../src/lib/domain/path.ts");
+const { recommend } = jiti("../src/lib/domain/recommend.ts");
+const { SKILLS } = jiti("../src/lib/catalog/index.ts");
+const { questionsForSkill } = jiti("../src/lib/domain/quizGen.ts");
+const p = { id:"t", name:"T", targetRole:"", goalText:"Become a Quant Developer at a hedge fund", experienceLevel:"intermediate", learningStyle:"mixed", weeklyHours:8, timelineWeeks:24, careerOutcome:"", interests:[], knownSkills:[], preferences:{} };
+const gap = t("gap", () => analyzeSkillGap(p));
+const pool = t("pool", () => buildPool(gap.orderedSkillIds, { level: "intermediate" }));
+const rm = t("roadmap", () => generateRoadmap(p, gap, 1, { pool }));
+t("recommend", () => recommend(p, gap, { limit: 3, minScore: 1, pool }));
+t("all-skill-questions", () => { let n = 0; for (const s of SKILLS) n += questionsForSkill(s.id).length; return n; });
+t("origins-lookup", () => rm.phases.flatMap(x=>x.steps).filter(s=>s.resourceId).map(s=>pool.all().find(x=>x.id===s.resourceId)).length);

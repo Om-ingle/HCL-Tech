@@ -11,6 +11,7 @@ import {
   FlaskConical,
   ClipboardCheck,
   ExternalLink,
+  Compass,
 } from "lucide-react";
 import type { HydratedStep, PhaseView } from "@/lib/domain/nextAction";
 import { Badge, Button, cx } from "./ui";
@@ -172,7 +173,7 @@ function StepRow({
         {step.score != null && <span className="ml-2 text-xs text-good">{step.score}%</span>}
       </button>
 
-      {step.url && (
+      {step.url ? (
         <a
           href={step.url}
           target="_blank"
@@ -182,7 +183,14 @@ function StepRow({
         >
           <ExternalLink className="h-3.5 w-3.5" />
         </a>
-      )}
+      ) : step.kind === "resource" ? (
+        <span
+          className="hidden text-faint group-hover:inline"
+          title="Guided study module built from the skill graph — no external link"
+        >
+          <Compass className="h-3.5 w-3.5" />
+        </span>
+      ) : null}
 
       {actionable && step.kind !== "assessment" && (
         <Button variant="soft" onClick={() => onComplete(step.id)} loading={completing} className="!px-2 !py-0.5 !text-xs">

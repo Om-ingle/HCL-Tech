@@ -1,14 +1,20 @@
-import { SKILL_BY_ID, getRole, matchRole, detectSkills } from "@/lib/catalog";
+import { SKILL_BY_ID, getRole, matchRole, skillName } from "@/lib/catalog";
 import type {
   GapStatus,
+  GoalResolution,
   LearnerProfile,
   Role,
   SkillGap,
   SkillGapItem,
 } from "./types";
-import { orderSkills, prerequisiteClosure } from "./util";
+import { expandTargets, resolveGoalForProfile, type GoalHint } from "./goalResolver";
+import { orderSkills } from "./util";
 
-/** Resolve the learner's target role from an id or free text. */
+/**
+ * Resolve the learner's target role from an id or free text.
+ * Kept for callers that specifically want a predefined role; open goals resolve
+ * through `resolveGoalForProfile` instead and legitimately have no Role.
+ */
 export function resolveRole(profile: LearnerProfile): Role | null {
   if (profile.targetRole && getRole(profile.targetRole)) {
     return getRole(profile.targetRole)!;
@@ -16,54 +22,32 @@ export function resolveRole(profile: LearnerProfile): Role | null {
   return matchRole(`${profile.targetRole ?? ""} ${profile.goalText ?? ""}`);
 }
 
-interface TargetSkill {
-  skillId: string;
-  targetLevel: number;
-}
-
-/**
- * Full target-skill set = role's skills + their prerequisite closure (so
- * foundational gaps surface). For unmatched/unusual goals, fall back to a
- * coherent foundational target so the learner still gets a usable roadmap.
- */
-function targetSkills(role: Role | null, profile: LearnerProfile): TargetSkill[] {
-  if (role) {
-    const base: TargetSkill[] = role.targetSkills.map((t) => ({ ...t }));
-    const present = new Set(base.map((t) => t.skillId));
-    for (const p of prerequisiteClosure(base.map((t) => t.skillId))) {
-      if (!present.has(p)) base.push({ skillId: p, targetLevel: 2 });
-    }
-    return base;
-  }
-  // Custom / unrecognized goal → foundational tech starter path.
-  const seed = ["python", "programming-fundamentals", "sql", "software-apis", "git"];
-  const ids = new Set(seed);
-  for (const p of prerequisiteClosure(seed)) ids.add(p);
-  return Array.from(ids).map((id) => ({ skillId: id, targetLevel: 2 }));
-}
-
 function reasonFor(
   status: GapStatus,
-  skillName: string,
   proficiency: number,
   target: number,
-  roleName: string,
+  goalName: string,
 ): string {
   const levelWord = ["none", "aware", "working", "strong"];
   switch (status) {
     case "mastered":
-      return `You're already at the level ${roleName} needs (${levelWord[proficiency]}).`;
+      return `You're already at the level ${goalName} needs (${levelWord[proficiency]}).`;
     case "partial":
-      return `You have a ${levelWord[proficiency]} grasp — ${roleName} expects ${levelWord[target]}. A focused push closes it.`;
+      return `You have a ${levelWord[proficiency]} grasp — ${goalName} expects ${levelWord[target]}. A focused push closes it.`;
     default:
-      return `Not in your profile yet, and required for ${roleName}.`;
+      return `Not in your profile yet, and required for ${goalName}.`;
   }
 }
 
-export function analyzeSkillGap(profile: LearnerProfile): SkillGap {
-  const role = resolveRole(profile);
-  const roleName = role?.name ?? (profile.targetRole || "your goal");
-  const targets = targetSkills(role, profile);
+/**
+ * Skill-gap analysis over a RESOLVED target skill set, so it works for any goal
+ * — predefined role or arbitrary free text. Pass a `hint` when an LLM has
+ * proposed candidate skills; it only ever widens the deterministic result.
+ */
+export function analyzeSkillGap(profile: LearnerProfile, hint?: GoalHint): SkillGap {
+  const resolution = resolveGoalForProfile(profile, hint);
+  const goalName = resolution.label || profile.targetRole || "your goal";
+  const { targets, addedPrerequisites } = expandTargets(resolution);
   const known = new Map(profile.knownSkills.map((k) => [k.skillId, k.proficiency]));
 
   const mastered: SkillGapItem[] = [];
@@ -85,7 +69,7 @@ export function analyzeSkillGap(profile: LearnerProfile): SkillGap {
       proficiency,
       targetLevel: t.targetLevel,
       prerequisites: s.prerequisites,
-      reason: reasonFor(status, s.name, proficiency, t.targetLevel, roleName),
+      reason: reasonFor(status, proficiency, t.targetLevel, goalName),
     };
     (status === "mastered" ? mastered : status === "partial" ? partial : missing).push(item);
   }
@@ -103,12 +87,48 @@ export function analyzeSkillGap(profile: LearnerProfile): SkillGap {
   partial.sort(byOrder);
   mastered.sort((a, b) => a.tier - b.tier || a.name.localeCompare(b.name));
 
+  // Provenance the UI shows as "how we read your goal".
+  const notes = [...resolution.notes];
+  if (addedPrerequisites.length) {
+    const example = addedPrerequisites
+      .map((id) => SKILL_BY_ID[id])
+      .filter(Boolean)
+      .sort((a, b) => a!.tier - b!.tier)[0];
+    notes.push(
+      `Added ${addedPrerequisites.length} prerequisite skill${addedPrerequisites.length === 1 ? "" : "s"} from the graph${example ? ` (starting with ${example.name})` : ""}.`,
+    );
+  }
+  if (mastered.length) {
+    notes.push(
+      `Skipped ${mastered.length} skill${mastered.length === 1 ? "" : "s"} you already have, including ${mastered.slice(0, 2).map((m) => m.name).join(" and ")}.`,
+    );
+  }
+
   return {
-    roleId: role?.id ?? null,
-    roleName,
+    roleId: resolution.roleId,
+    roleName: goalName,
     mastered,
     partial,
     missing,
     orderedSkillIds,
+    resolution: { ...resolution, notes } as GoalResolution,
   };
+}
+
+/** Human-readable prerequisite explanation used by "How we built your path". */
+export function prerequisiteNotes(orderedSkillIds: string[]): string[] {
+  const position = new Map(orderedSkillIds.map((id, i) => [id, i]));
+  const out: string[] = [];
+  for (const id of orderedSkillIds) {
+    const skill = SKILL_BY_ID[id];
+    if (!skill) continue;
+    for (const p of skill.prerequisites) {
+      if (position.has(p) && position.get(p)! < position.get(id)!) {
+        out.push(`${skill.name} comes after ${skillName(p)} because it's a prerequisite.`);
+        break;
+      }
+    }
+    if (out.length >= 3) break;
+  }
+  return out;
 }

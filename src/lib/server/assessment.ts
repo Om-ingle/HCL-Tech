@@ -1,9 +1,15 @@
-import { QUIZ_BY_SKILL, QUIZZES } from "@/lib/catalog";
+import { QUIZZES } from "@/lib/catalog";
+import { findGeneratedQuestion, questionsForSkill } from "@/lib/domain/quizGen";
 import type { QuizQuestion, Roadmap, Step } from "@/lib/domain/types";
 
 const QUESTION_BY_ID: Record<string, QuizQuestion> = Object.fromEntries(
   QUIZZES.map((q) => [q.id, q]),
 );
+
+/** Curated question, or a graph-generated one re-derived from its id. */
+function lookupQuestion(id: string): QuizQuestion | undefined {
+  return QUESTION_BY_ID[id] ?? findGeneratedQuestion(id);
+}
 
 export interface PublicQuestion {
   id: string;
@@ -12,13 +18,14 @@ export interface PublicQuestion {
   options: string[];
 }
 
-/** Questions for a set of skills, capped, with the answer key stripped. */
+/**
+ * Questions for a set of skills, capped, with the answer key stripped.
+ * Falls back to graph-generated questions for skills with no curated quiz, so
+ * open-goal paths still get real checkpoints.
+ */
 export function questionsForSkills(skillIds: string[], perSkill = 2): QuizQuestion[] {
   const out: QuizQuestion[] = [];
-  for (const s of skillIds) {
-    const qs = QUIZ_BY_SKILL[s] ?? [];
-    out.push(...qs.slice(0, perSkill));
-  }
+  for (const s of skillIds) out.push(...questionsForSkill(s, perSkill));
   return out;
 }
 
@@ -39,7 +46,7 @@ export function gradeAnswers(answers: { questionId: string; choiceIndex: number 
   let total = 0;
   const skills = new Set<string>();
   for (const a of answers) {
-    const q = QUESTION_BY_ID[a.questionId];
+    const q = lookupQuestion(a.questionId);
     if (!q) continue;
     total += 1;
     skills.add(q.skillId);

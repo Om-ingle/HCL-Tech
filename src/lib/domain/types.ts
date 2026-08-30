@@ -10,7 +10,8 @@ export type ResourceType =
   | "book"
   | "project"
   | "assessment"
-  | "exercise";
+  | "exercise"
+  | "module"; // generated learning module (Layer 3 of resource discovery)
 
 // ── Static catalog shapes ─────────────────────────────────────────────────────
 export interface Skill {
@@ -20,6 +21,8 @@ export interface Skill {
   tier: SkillTier; // rough learning order within a domain (1 = foundational)
   prerequisites: string[]; // skill ids
   description: string;
+  aliases?: string[]; // synonyms/tech names used to resolve free-text goals
+  related?: string[]; // sibling skills — expands an under-specified goal
 }
 
 export interface RoleTargetSkill {
@@ -36,6 +39,9 @@ export interface Role {
   targetSkills: RoleTargetSkill[];
 }
 
+/** Where a resource came from. Only `generated` has no external URL. */
+export type ResourceOrigin = "catalog" | "canonical" | "search" | "generated";
+
 export interface Resource {
   id: string;
   title: string;
@@ -46,9 +52,12 @@ export interface Resource {
   prerequisites: string[]; // skill ids expected beforehand
   durationHours: number;
   description: string;
-  url: string;
+  /** Real, discovered URL. Absent for generated modules — never invented. */
+  url?: string;
   tags: string[];
   provider?: string;
+  origin?: ResourceOrigin;
+  concepts?: string[]; // syllabus outline (generated modules)
 }
 
 export interface QuizQuestion {
@@ -70,6 +79,20 @@ export interface Preferences {
   typeBias?: Partial<Record<ResourceType, number>>;
   difficultyBias?: number; // -1 prefers easier … +1 prefers harder
   dislikedResourceIds?: string[];
+  /** Learner-confirmed target skills — overrides goal inference when present. */
+  targetSkillIds?: string[];
+  /** LLM-inferred skills that aren't in the curated catalog, persisted so they
+   *  survive restarts and re-registration on every profile load. */
+  dynamicSkills?: DynamicSkillDef[];
+}
+
+/** A skill the AI inferred for a goal outside the curated catalog. */
+export interface DynamicSkillDef {
+  id?: string; // dyn-<slug>, stable across processes; derived from name when absent
+  name: string;
+  domain: string;
+  description?: string; // one line from the LLM, used by generated modules
+  tier?: SkillTier;
 }
 
 export interface LearnerProfile {
@@ -104,6 +127,30 @@ export interface ProfileDraft {
   notes?: string[];
 }
 
+// ── Open-goal resolution ─────────────────────────────────────────────────────
+// How an arbitrary natural-language goal became a concrete target skill set.
+export type GoalMethod =
+  | "role" // matched a predefined role
+  | "archetype" // matched a known goal archetype (kernel dev, quant, …)
+  | "terms" // inferred from skill names/aliases in the text
+  | "domain" // inferred from a domain keyword
+  | "llm" // LLM proposed skills (always validated against the graph)
+  | "starter"; // nothing recognized — foundational starter route
+
+export interface GoalResolution {
+  goalText: string;
+  label: string; // human-readable destination, e.g. "Linux Kernel Developer"
+  domain: string; // primary domain
+  domains: string[]; // all domains touched, most relevant first
+  roleId: string | null; // set only when a predefined role matched
+  targets: RoleTargetSkill[]; // seed targets (before prerequisite expansion)
+  methods: GoalMethod[]; // every signal that contributed, strongest first
+  matchedTerms: string[]; // phrases we understood
+  unknownTerms: string[]; // phrases we could not map — used to bias discovery
+  confidence: number; // 0..1, drives how loudly the UI asks for confirmation
+  notes: string[]; // "how we read your goal" provenance lines
+}
+
 // ── Skill-gap analysis ──────────────────────────────────────────────────────
 export type GapStatus = "mastered" | "partial" | "missing";
 
@@ -126,6 +173,7 @@ export interface SkillGap {
   partial: SkillGapItem[];
   missing: SkillGapItem[];
   orderedSkillIds: string[]; // topologically sorted learning order for gaps
+  resolution?: GoalResolution; // how an open goal was interpreted
 }
 
 // ── Recommendations ─────────────────────────────────────────────────────────
@@ -186,6 +234,8 @@ export interface RoadmapRationale {
   summary: string;
   strategy: string;
   gapCounts: { mastered: number; partial: number; missing: number };
+  /** "How we built your path" — plain-language provenance for the route. */
+  how?: string[];
 }
 
 export interface Roadmap {

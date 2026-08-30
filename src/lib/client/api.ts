@@ -1,4 +1,5 @@
 import type {
+  GoalResolution,
   LearnerProfile,
   Recommendation,
   Roadmap,
@@ -49,6 +50,23 @@ export interface PersonaMeta {
   sampleOnboardingText: string;
 }
 
+/** A target skill the goal resolver inferred, shown on the confirmation screen. */
+export interface TargetSkill {
+  skillId: string;
+  name: string;
+  domain: string;
+  targetLevel: number;
+}
+
+export interface GoalResolveResponse {
+  resolution: GoalResolution;
+  source: "llm" | "fallback";
+  provider?: string;
+  /** AI-inferred skills outside the catalog — persisted with the profile. */
+  dynamicSkills: { id?: string; name: string; domain?: string; description?: string; tier?: number }[];
+  targets: TargetSkill[];
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -70,10 +88,17 @@ const post = <T>(path: string, body: unknown) =>
 export const api = {
   // Onboarding & profile
   onboard: (text: string) =>
-    post<{ draft: ProfileDraft; source: "llm" | "fallback"; provider?: string; aiStatus: PublicAiStatus }>(
-      "/api/onboard",
-      { text },
-    ),
+    post<{
+      draft: ProfileDraft;
+      source: "llm" | "fallback";
+      provider?: string;
+      aiStatus: PublicAiStatus;
+      resolution: GoalResolution;
+      dynamicSkills: { id?: string; name: string; domain?: string; description?: string; tier?: number }[];
+      targets: TargetSkill[];
+    }>("/api/onboard", { text }),
+  resolveGoal: (text: string, targetRole?: string) =>
+    post<GoalResolveResponse>("/api/goal/resolve", { text, targetRole }),
   createProfile: (input: Record<string, unknown>) =>
     post<NavigatorBundle & { view: NavigatorView }>("/api/profile", input),
   getProfileBundle: (id: string) => req<NavigatorBundle>(`/api/profile/${id}`),
@@ -117,12 +142,30 @@ export const api = {
   // Insight
   dashboard: (profileId: string) => req<DashboardData>(`/api/dashboard/${profileId}`),
   skillGap: (profileId: string) =>
-    req<{ gap: SkillGap; recommendations: Recommendation[] }>(`/api/skill-gap/${profileId}`),
-  assistant: (profileId: string | null, question: string) =>
-    post<{ text: string; source: "llm" | "fallback"; provider?: string; aiStatus: PublicAiStatus }>(
-      "/api/assistant",
-      { profileId: profileId ?? undefined, question },
-    ),
+    req<{
+      gap: SkillGap;
+      recommendations: Recommendation[];
+      discovery?: {
+        catalog: number;
+        canonical: number;
+        external: number;
+        generated: number;
+        skillsCovered: number;
+        skillsGeneratedOnly: string[];
+      };
+    }>(`/api/skill-gap/${profileId}`),
+  assistant: (
+    profileId: string | null,
+    question: string,
+    history: { role: "user" | "assistant"; text: string }[] = [],
+  ) =>
+    post<{
+      text: string;
+      source: "llm" | "fallback";
+      provider?: string;
+      note?: string;
+      aiStatus: PublicAiStatus;
+    }>("/api/assistant", { profileId: profileId ?? undefined, question, history }),
 
   // Personas
   listPersonas: () => req<{ personas: PersonaMeta[] }>("/api/seed"),
