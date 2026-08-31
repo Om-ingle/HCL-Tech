@@ -26,11 +26,11 @@ The intended experience is a demo-able end-to-end product (hackathon MVP by desi
 ## 2. Complete architecture
 
 ```
-User (anonymous browser)
+Browser (guest by default; optional Supabase Auth account)
   │
   ├── profileId: localStorage ("skill-atlas", zustand persist)
   └── ai_sid: HttpOnly cookie (set in middleware.ts)
-        │
+        │  + Supabase auth session cookies (only when logged in)
         ▼
 UI  — src/app/(pages) + src/components   [client components, zustand store]
         │  fetch (src/lib/client/api.ts)
@@ -90,9 +90,10 @@ Prisma (src/lib/db.ts singleton)  →  Supabase PostgreSQL
 | `src/lib/catalog/dynamic.ts` | Registers LLM-inferred skills as full graph citizens (`dyn-*`). |
 | `src/lib/discovery/index.ts` | The 3-layer pool (`buildPool`, `fetchExternal`). |
 | `src/lib/server/service.ts` | Everything the API routes call. |
+| `src/lib/server/auth.ts` | Server-side auth authority: `currentUser()` (Supabase cookie session), `guardProfile` (route ownership), `claimProfileForUser` (guest → account), `aiScopeId`. |
 | `src/middleware.ts` | Issues the anonymous `ai_sid` cookie. |
 | `src/lib/serialize.ts` | Row ⇄ domain-object mapping (JSON string columns). |
-| `scripts/verify-ai-wiring.cjs`, `scripts/verify-layout.cjs` | The two verification suites (§20). |
+| `scripts/verify-ai-wiring.cjs`, `scripts/verify-auth-smoke.cjs`, `scripts/verify-layout.cjs` | The three verification suites (§20). |
 
 There is **no MCP** implementation. External resource discovery is a pluggable search-provider layer (Tavily-shaped), OFF by default — see §9.
 
@@ -105,6 +106,7 @@ Actually present in `package.json` (no other runtime deps; **no vendor AI SDKs**
 - **Next.js 14.2.15** (App Router) · **React 18.3** · **TypeScript 5.6**
 - **Tailwind CSS 3.4** (design tokens as CSS variables, `tailwind.config.ts` maps them)
 - **Prisma 5.22** + **Supabase PostgreSQL**
+- **@supabase/ssr 0.12** (Supabase Auth cookie sessions for the optional accounts, §13)
 - **Zod 3.23** (API input validation, `src/lib/validation/schemas.ts`)
 - **Zustand 4.5** (client store with `persist` → localStorage key `skill-atlas`)
 - **Framer Motion 11** (animations, incl. the reroute overlay)
@@ -274,7 +276,7 @@ Biases live in `profile.preferences` (`difficultyBias`, `typeBias`, `domainBias`
 
 ## 12. Database
 
-- **Supabase PostgreSQL** via **Prisma 5**. Schema: `prisma/schema.prisma`; one migration (`20260824025208_init_postgres`; a legacy `prisma/dev.db` remains from the pre-Postgres SQLite era and is unused).
+- **Supabase PostgreSQL** via **Prisma 5**. Schema: `prisma/schema.prisma`; two migrations (`20260824025208_init_postgres`, `20260830181217_auth_owner_routes` — adds `LearnerProfile.ownerId`); a legacy `prisma/dev.db` remains from the pre-Postgres SQLite era and is unused.
 - Connection env vars (names only, values in `.env`, never commit them):
   - `DATABASE_URL` — **transaction pooler** (port 6543, `?pgbouncer=true&connection_limit=1`) — used at runtime.
   - `DIRECT_URL` — **session pooler** (port 5432) — used by Prisma for migrations.
@@ -290,7 +292,7 @@ Biases live in `profile.preferences` (`difficultyBias`, `typeBias`, `domainBias`
 | `Event` | history: `profile_created|completion|assessment|feedback|adaptation|time_change|goal_change` + JSON payload (drives the dashboard activity feed) |
 | `AiConfig` | per-session or per-account AI config (row id = `ai_sid` session id for guests, `u-<auth user id>` for accounts), §13 |
 
-**Seed** (`POST /api/seed`, "Try a demo" button): idempotently creates the 3 demo personas with **fixed ids** (`persona-ananya`, …) and generates their roadmaps. **Anonymous sessions**: there are no user accounts — the browser holds only a `profileId` in localStorage pointing at a `LearnerProfile` row; a stale id (reset DB) yields a clean 404 which the client treats as "chart a new route".
+**Seed** (`POST /api/seed`, "Try a demo" button): idempotently creates the 3 demo personas with **fixed ids** (`persona-ananya`, …) and generates their roadmaps. **Sessions**: a browser holds its current `profileId` in localStorage pointing at a `LearnerProfile` row (guests) or one of the account's route rows (§13); a stale id (reset DB) yields a clean 404 which the client treats as "chart a new route".
 
 ---
 
@@ -399,9 +401,10 @@ They exist for fast demonstration/testing. They differ from real users in that t
 
 ## 20. Testing and verification
 
-No unit-test framework. Two Node verification scripts (run with `node scripts/…`; they use only Node stdlib + jiti + the real DB from `.env`):
+No unit-test framework. Three Node verification scripts (run with `node scripts/…`; they use only Node stdlib + jiti + the real DB from `.env`):
 
 - **`scripts/verify-ai-wiring.cjs`** — proves the AI layer end-to-end: (1) every provider adapter issues a REAL HTTP call to its own vendor endpoint with the model in the request (fake key → expected vendor auth error IS the proof); (2) a session-scoped fake key → call attempted, graceful fallback + visible note; (3) no session → deterministic, zero network; (4) Gemini adapter diagnoses empty candidates / thought parts / safety blocks; (5) retired-model 404 → one retry with the current default + message; (6) model catalog sanity (≥2 options each, honest cost labels, no retired ids, default listed); (7) real-DB API flow (seed → path/gap/dashboard routes, 404 for unknown learner).
+- **`scripts/verify-auth-smoke.cjs`** — auth/multi-goal smoke test (guest mode, no Supabase env needed): `/api/auth/me` degrades to guest + `authConfigured:false`; `/api/routes` 401s for guests; persona/guest routes stay fully accessible (`ownerId=null`); an owned profile 403s without its owner's session; `mergeKnownSkills` union/max-proficiency logic. (Full authenticated E2E — signup, claim, multi-route — is a manual flow once `NEXT_PUBLIC_SUPABASE_*` env vars are set.)
 - **`scripts/verify-layout.cjs`** — responsive verification in headless Edge over the Chrome DevTools Protocol (hand-rolled WebSocket client): boots `next dev`, seeds personas + a freshly-onboarded probe learner, drives the app like a user, and FAILs on page-level horizontal overflow, any element outside the viewport, or content clipped inside a card — across phone/tablet/desktop widths (320–1440), a 740×360 landscape check, per-page content assertions from API data, and screenshots into `scripts/shots/`.
 
 **Manual flows after major changes**: onboarding with a plain-English sentence (with and without an AI key configured); "Try a demo" → complete a step → pass/fail a checkpoint → Simulate a reroute → read What Changed; ask the assistant "why this step?"; test an out-of-domain goal ("dancing") with AI off and on; resize desktop → phone continuously on the Navigator.
@@ -412,7 +415,7 @@ No unit-test framework. Two Node verification scripts (run with `node scripts/�
 
 - **Vercel** (no `vercel.json` — default Next.js integration). Production build: `npm run build` = `prisma migrate deploy && next build` (migrations are applied from the build step); `postinstall` runs `prisma generate`.
 - **Environment variables by name only**: `DATABASE_URL` (transaction pooler), `DIRECT_URL` (session pooler, migrations); optional `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` (enable accounts — without them all auth UI is hidden and the app is guest-only); optional `SEARCH_PROVIDER=tavily` + `SEARCH_API_KEY` (external discovery, off unless set). There are deliberately **no AI key env vars in use** — runtime AI config is per-session/per-user in the DB (§13). The `LLM_*`/`AI_MODE` block in `.env.example` is stale and ignored by the code.
-- Supabase provides the Postgres instance; the app holds no other infrastructure. First deploy of a fresh DB: run `db:deploy` (or rely on the build step) — the schema is a single init migration.
+- Supabase provides the Postgres instance (and, optionally, Auth); the app holds no other infrastructure. First deploy of a fresh DB: run `db:deploy` (or rely on the build step).
 - Considerations: serverless functions must reach Supabase (pooler URLs); AI calls happen server-side only, so vendor egress comes from the deploy region; the app works with zero configured AI keys.
 
 ---
@@ -426,7 +429,8 @@ No unit-test framework. Two Node verification scripts (run with `node scripts/�
 - **Model deprecation** is mitigated (one retry with the provider default) but the catalog can drift from vendors between updates.
 - **Latent bug (known, unfixed)**: a hard refresh directly on a guarded page (`/step/…`, `/navigator`, `/gap`, `/dashboard`) can bounce to home — the `if (!profileId) router.replace("/")` effect occasionally wins the race against zustand persist hydration from localStorage. Client-side navigation (normal usage) is unaffected.
 - Demo personas are hand-tuned; real-world goal resolution is only as good as the graph + optional LLM.
-- Hackathon MVP scope: no auth/accounts, no i18n, one locale-tolerant prompt (English/Hinglish).
+- Hackathon MVP scope: accounts are intentionally minimal (email/password only — no roles, admin, orgs, SSO, or password reset UI); no i18n, one locale-tolerant prompt (English/Hinglish).
+- Authenticated E2E (signup → claim → multiple routes) is not covered by an automated script — only the guest-mode smoke test (§20) runs without the Supabase auth env vars.
 
 ---
 
@@ -440,11 +444,11 @@ No unit-test framework. Two Node verification scripts (run with `node scripts/�
 6. **Never expose API keys.** Server-side only, masked in the UI, stripped from error messages/logs; never hardcoded, never a default/fallback key.
 7. **No global AI configuration.** Config is per scope — the anonymous `ai_sid` session for guests, `u-<user id>` for accounts. One visitor must never inherit another's provider, and the AI session id is never the learner/account identity.
 8. **Enforce ownership server-side.** Every profile-scoped route goes through `guardProfile`; an owned route 403s for anyone but its owner. Never rely on UI hiding for access control.
-8. **Keep fallback honest.** A failed provider call is reported as such; deterministic answers are never presented as "the AI said".
-9. **Keep LLM calls small**: structured output, tight maxTokens, once-per-flow (goal resolution at onboarding only), last-3-message history.
-10. **Preserve the provider abstraction** — new vendor = one adapter + `PROVIDER_META` entry; nothing outside `src/lib/ai` may talk to a vendor.
-11. **Goal-change correctness**: known-skill history is preserved; confirmed targets/dynamic skills/goalText are invalidated on retarget; the assistant context must always be rebuilt from current state.
-12. **Maintain responsive behavior**: no page-level horizontal overflow at any width; the Navigator grid keeps its `grid-cols-1` base; no `overflow-x: hidden` "fixes"; no separate mobile design. Run `scripts/verify-layout.cjs` after layout changes.
-13. **Anonymous by design**: profileId lives in the browser; a stale id must degrade gracefully (404 → re-onboard), never 500.
-14. **Avoid unnecessary dependencies/refactors** — plain-`fetch` AI calls, stdlib verification scripts, MVP scope.
-15. **Verify existing flows after changes**: `node scripts/verify-ai-wiring.cjs`, `node scripts/verify-layout.cjs`, `npx tsc --noEmit`, plus the manual flows in §20.
+9. **Keep fallback honest.** A failed provider call is reported as such; deterministic answers are never presented as "the AI said".
+10. **Keep LLM calls small**: structured output, tight maxTokens, once-per-flow (goal resolution at onboarding only), last-3-message history.
+11. **Preserve the provider abstraction** — new vendor = one adapter + `PROVIDER_META` entry; nothing outside `src/lib/ai` may talk to a vendor.
+12. **Goal-change correctness**: known-skill history is preserved; confirmed targets/dynamic skills/goalText are invalidated on retarget; the assistant context must always be rebuilt from current state.
+13. **Maintain responsive behavior**: no page-level horizontal overflow at any width; the Navigator grid keeps its `grid-cols-1` base; no `overflow-x: hidden` "fixes"; no separate mobile design. Run `scripts/verify-layout.cjs` after layout changes.
+14. **Guest-first by design**: everything works without an account; auth is optional and additive. profileId lives in the browser; a stale id must degrade gracefully (404 → re-onboard), never 500. A guest's current route is claimed at signup/login — never restarted.
+15. **Avoid unnecessary dependencies/refactors** — plain-`fetch` AI calls, stdlib verification scripts, MVP scope.
+16. **Verify existing flows after changes**: `node scripts/verify-ai-wiring.cjs`, `node scripts/verify-auth-smoke.cjs`, `node scripts/verify-layout.cjs`, `npx tsc --noEmit`, plus the manual flows in §20.
