@@ -2,7 +2,7 @@
 
 **Your goal. Your route. Your next move.**
 
-Skill Atlas is an AI-powered learning navigator. Describe what you want to achieve in plain language, and it turns your current skills, pace and progress into a personalized, prerequisite-aware learning route — then recalculates that route as you learn, the way a GPS recalculates when you take a different turn.
+Skill Atlas is an AI-powered learning navigator. Describe what you want to achieve in plain language, and it turns your current skills, pace and progress into a personalized, prerequisite-aware learning route  then recalculates that route as you learn, the way a GPS recalculates when you take a different turn.
 
 ```
 Goal  →  Understand  →  Find the gaps  →  Build the route  →  Learn  →  Reroute
@@ -38,7 +38,7 @@ The order is the point. You can't learn Docker before you know the command line,
 
 **Track it.** A progress dashboard and **Skill Passport** of your proficiency levels. Light/dark mode, one responsive UI from phone to desktop.
 
-**Keep it — or don't.** Use Skill Atlas as a guest with zero friction, or create a free account (email + password) to save your progress across devices. Accounts can hold **multiple routes** — data science *and* Linux kernel development — each with its own roadmap, progress and adaptations, while skills you've proven on one route carry over to the others. Sign up mid-journey and your current route is saved, not restarted.
+**Keep it  or don't.** Use Skill Atlas as a guest with zero friction, or create a free account (email + password) to save your progress across devices. Accounts can hold **multiple routes**  data science *and* Linux kernel development  each with its own roadmap, progress and adaptations, while skills you've proven on one route carry over to the others. Sign up mid-journey and your current route is saved, not restarted.
 
 ## See it in action
 
@@ -77,11 +77,11 @@ BYOK - bring your own key, pick a provider and model in the app's AI settings, a
 
 Next.js 14 · TypeScript · React 18 · Tailwind CSS · Prisma · Supabase PostgreSQL · Supabase Auth · Zod · Zustand · Framer Motion
 
-Plain `fetch` for all AI calls — no vendor SDKs.
+Plain `fetch` for all AI calls  no vendor SDKs.
 
 ## Deployment
 
-Vercel + Supabase: set the same env vars, push to Vercel — the build applies Prisma migrations itself (`prisma migrate deploy && next build`). Serverless functions reach Postgres through Supabase's connection pooler; all AI calls run server-side; the app runs with zero AI keys configured.
+Vercel + Supabase: set the same env vars, push to Vercel  the build applies Prisma migrations itself (`prisma migrate deploy && next build`). Serverless functions reach Postgres through Supabase's connection pooler; all AI calls run server-side; the app runs with zero AI keys configured.
 
 ## Run it locally
 
@@ -98,7 +98,7 @@ No API key required. Optional `.env` additions: `NEXT_PUBLIC_SUPABASE_URL` + `NE
 
 ## Deployment
 
-Vercel + Supabase: set the same env vars above, deploy — the build applies Prisma migrations itself (`prisma migrate deploy && next build`). Serverless functions reach Postgres through Supabase's connection pooler; all AI calls run server-side.
+Vercel + Supabase: set the same env vars above, deploy  the build applies Prisma migrations itself (`prisma migrate deploy && next build`). Serverless functions reach Postgres through Supabase's connection pooler; all AI calls run server-side.
 
 ## Demo
 
